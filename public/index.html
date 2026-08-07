@@ -15,6 +15,7 @@ main{display:grid;grid-template-columns:53% 47%;min-height:760px}
 .halo{position:absolute;width:500px;height:500px;border-radius:50%;top:45px;background:#ffdce8;transition:.4s}
 .avatarWrap{position:relative;z-index:2;width:min(92%,590px);height:700px;display:flex;align-items:end;justify-content:center;transition:.25s}
 .avatar{width:100%;height:100%;object-fit:cover;object-position:center 27%;border-radius:24px 24px 0 0;filter:drop-shadow(0 25px 30px #50354622)}
+.avatarVideo{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;object-position:center 27%;border-radius:24px 24px 0 0;filter:drop-shadow(0 25px 30px #50354622)}
 .avatarWrap.listening{animation:breathe 2.2s ease-in-out infinite}.avatarWrap.talking{animation:talk .28s ease-in-out infinite alternate}
 @keyframes breathe{50%{transform:translateY(-3px)}}@keyframes talk{from{transform:translateY(0) scale(1)}to{transform:translateY(-2px) scale(1.008)}}
 .mouth{position:absolute;left:var(--mx,50%);top:var(--my,30%);width:var(--mw,16%);height:var(--mh,7%);transform:translate(-50%,-50%);border-radius:50% 50% 60% 60%/45% 45% 55% 55%;background:radial-gradient(ellipse at center,#0000 30%,#0008 70%);filter:blur(1px);opacity:0;pointer-events:none;transition:transform .05s linear;mix-blend-mode:multiply}
@@ -168,17 +169,19 @@ const avV=document.getElementById('avatarVideo');
 const avI=document.getElementById('avatar');
 function setAvatarMode(mode){
   if(!AV_MODES.includes(mode))mode='idle';
-  if(mode===avMode&&avV&&avV.src)return;
   avMode=mode;
   if(!avV)return;
+  if(avV.dataset.src===mode)return;
+  avV.dataset.src=mode;
   avV.src=`videos/avatar-${mode}.mp4`;
   avV.load();
   avV.play().catch(()=>{});
 }
 if(avV){
   avV.addEventListener('loadeddata',()=>{avV.style.display='block';avI.style.display='none'});
-  avV.addEventListener('error',()=>{avV.style.display='none';avI.style.display='block';avV.src=''});
+  avV.addEventListener('error',()=>{avV.style.display='none';avI.style.display='block';avV.dataset.src=''});
 }
+setAvatarMode('idle');
 function add(t,w){let d=document.createElement('div');d.className='msg '+w;d.textContent=t;$('messages').appendChild(d);$('messages').scrollTop=$('messages').scrollHeight}
 function status(t,on=false){$('status').innerHTML='<span class="dot"></span>'+t;$('status').classList.toggle('on',on)}
 function bubble(html){$('bubble').innerHTML=html}
