@@ -7,5 +7,10 @@ compatibility_date = "2024-11-01"
 directory = "./public"
 not_found_handling = "single-page-application"
 
+# Cloud-scoped conversation memory (remembers you from any device)
+[[kv_namespaces]]
+binding = "MEMORY"
+id = "d3626cb9ce154597a8d25c468093b687"
+
 # Local dev: read GEMINI_API_KEY from .env via `wrangler dev`
 # (set the real secret in Cloudflare dashboard: Settings > Variables and Secrets)

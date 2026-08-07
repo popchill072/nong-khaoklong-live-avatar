@@ -9,11 +9,55 @@ export default {
       return mintToken(env);
     }
 
+    // Cloud memory: GET  /api/history?key=ME      -> saved turns
+    //                POST /api/history  {key, turns} -> save turns
+    if (url.pathname === "/api/history") {
+      return handleHistory(request, url, env);
+    }
+
     // Serve static assets from the bundled ./public directory.
     const asset = await env.ASSETS.fetch(request);
     return asset;
   },
 };
+
+async function handleHistory(request, url, env) {
+  let key = (url.searchParams.get("key") || "").trim();
+  let bodyTurns = null;
+
+  if (request.method === "POST") {
+    try {
+      const body = await request.json();
+      if (!key) key = (body.key || "").trim();
+      bodyTurns = Array.isArray(body.turns) ? body.turns : null;
+    } catch (e) {
+      return json({ error: "Bad JSON body" }, 400);
+    }
+  }
+
+  if (!key) return json({ error: "Missing key" }, 400);
+
+  if (request.method === "GET") {
+    try {
+      const raw = await env.MEMORY.get(`h:${key}`);
+      return json({ turns: raw ? JSON.parse(raw) : [] }, 200);
+    } catch (e) {
+      return json({ error: String(e?.message || e) }, 500);
+    }
+  }
+
+  if (request.method === "POST") {
+    try {
+      const turns = bodyTurns ? bodyTurns.slice(-80) : [];
+      await env.MEMORY.put(`h:${key}`, JSON.stringify(turns));
+      return json({ ok: true, saved: turns.length }, 200);
+    } catch (e) {
+      return json({ error: String(e?.message || e) }, 500);
+    }
+  }
+
+  return json({ error: "Method not allowed" }, 405);
+}
 
 async function mintToken(env) {
   const apiKey = env.GEMINI_API_KEY;
