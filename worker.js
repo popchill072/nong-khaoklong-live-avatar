@@ -41,7 +41,7 @@ async function generateImage(request, env) {
   if (!prompt) return json({ error: "Missing prompt" }, 400);
 
   const wanted = env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
-  const candidates = [wanted, "gemini-2.5-flash-image", "gemini-3.1-flash-native-image"];
+  const candidates = [wanted, "gemini-2.5-flash-image", "gemini-3.1-flash-lite-image"];
   const seen = new Set();
   const payload = {
     contents: [{ parts: [{ text: prompt }] }],
