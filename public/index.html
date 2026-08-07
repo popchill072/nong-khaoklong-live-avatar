@@ -104,8 +104,7 @@ try{memKey=localStorage.getItem(MEMKEY_STORE)||''}catch(e){}
 
 function getMemKey(){return memKey||localStorage.getItem(MEMKEY_STORE)||''}
 function setMemKeyUI(){const el=$('memKeyInput');if(el)el.value=getMemKey()}
-function saveMemKey(){memKey=($('memKeyInput').value||'').trim();try{localStorage.setItem(MEMKEY_STORE,memKey)}catch(e){}if(memKey)refreshHistory();else history=[];add('🎒 ตั้งรหัสความจำแล้ว'+ (memKey?' (ใช้ได้ทุกเครื่อง)':' (ล้างรหัสแล้ว)'),'ai')}
-setMemKey();
+function saveMemKey(){memKey=($('memKeyInput').value||'').trim();try{localStorage.setItem(MEMKEY_STORE,memKey)}catch(e){}if(memKey)loadFromCloud();else history=[];add('🎒 ตั้งรหัสความจำแล้ว'+ (memKey?' (ใช้ได้ทุกเครื่อง)':' (ล้างรหัสแล้ว)'),'ai')}
 
 async function loadFromCloud(){
   const k=getMemKey();if(!k)return;
@@ -201,7 +200,21 @@ function setupSession(){
         activityHandling:"ACTIVITY_HANDLING_UNSPECIFIED",
         turnCoverage:"TURN_INCLUDES_ONLY_ACTIVITY"
       },
-      historyConfig:{initialHistoryInClientContent:true}
+      historyConfig:{initialHistoryInClientContent:true},
+      tools:[{
+        functionDeclarations:[{
+          name:"generate_image",
+          description:"Generate an image (e.g. poster, logo, infographic, illustration, content art) from a text prompt. Call this when the user asks to create/make/generate an image, poster, logo, artwork, picture or visualizing content.",
+          parameters:{
+            type:"OBJECT",
+            properties:{
+              prompt:{type:"STRING",description:"Detailed English description of the image to generate. Include style, colors, composition and any text to render legibly."},
+              aspectRatio:{type:"STRING",description:"One of: '1:1','3:2','2:3','4:3','3:4','9:16','16:9'. Default '1:1'."}
+            },
+            required:["prompt"]
+          }
+        }]
+      }]
     }
   });
 }
@@ -222,6 +235,12 @@ async function onWsMessage(ev){
   }catch{return}
   if(data.setupComplete){status('กำลังคุยกับข้าวกล้อง',true);sendMemoryHistory();return}
   if(data.error){console.error('Gemini error',data.error);return}
+  if(data.toolCall&&data.toolCall.functionCalls){
+    for(const fc of data.toolCall.functionCalls){
+      if(fc.name==='generate_image')handleImageTool(fc);
+    }
+    return;
+  }
   const sc=data.serverContent;
   if(!sc)return;
   if(sc.interrupted){
@@ -262,6 +281,39 @@ async function onWsMessage(ev){
     if(tr.userText)add(tr.userText,'user');
     if(tr.modelText)add(tr.modelText,'ai');
   }
+}
+
+/* ------- Image generation tool ------- */
+async function handleImageTool(fc){
+  const prompt=(fc.args&&(fc.args.prompt||''))||'';
+  const aspect=fc.args&&fc.args.aspectRatio?fc.args.aspectRatio:'1:1';
+  if(!prompt){sendToolResult(fc.id,[{prompt}],'ไม่ได้ prompt มา');return}
+  $('wave').textContent='🎨 กำลังสร้างภาพ...';
+  add('🎨 กำลังสร้างภาพ: '+prompt,'user');
+  try{
+    const r=await fetch('/api/image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,aspectRatio:aspect})});
+    const d=await r.json();
+    if(!r.ok||!d.data)throw Error(d.error||('HTTP '+r.status));
+    addImageToChat(d.data,d.mimeType||'image/png');
+    sendToolResult(fc.id,[{prompt}],'success, image delivered to user');
+  }catch(e){
+    add('❌ สร้างภาพไม่สำเร็จ: '+e.message,'ai');
+    sendToolResult(fc.id,[{prompt}],'error: '+e.message);
+  }
+}
+function addImageToChat(b64,mime){
+  const w=$('messages');
+  const wrap=document.createElement('div');
+  wrap.className='msg ai';
+  const im=document.createElement('img');
+  im.src=`data:${mime};base64,${b64}`;
+  im.style.maxWidth='100%';im.style.borderRadius='12px';
+  wrap.appendChild(im);
+  w.appendChild(wrap);
+  w.scrollTop=w.scrollHeight;
+}
+function sendToolResult(id,args){
+  sendWs({toolResponse:{functionResponses:[{id,response:{result:"ok",args}}]}});
 }
 
 /* ------- Audio capture (16kHz PCM16 -> base64) ------- */
