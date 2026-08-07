@@ -1,0 +1,20 @@
+{
+  "name": "nong-khaoklong-ai-v3-live-avatar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "pages:dev": "wrangler pages dev public",
+    "pages:deploy": "wrangler pages deploy public",
+    "pages:secret": "wrangler pages secret put GEMINI_API_KEY"
+  },
+  "dependencies": {
+    "@google/genai": "^2.16.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

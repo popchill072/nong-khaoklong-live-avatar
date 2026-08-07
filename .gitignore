@@ -1,0 +1,15 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Local env / secrets (DO NOT COMMIT)
+.env
+.env.local
+
+# Cloudflare
+.wrangler/
+.dev.vars
+
+# OS
+Thumbs.db
+.DS_Store

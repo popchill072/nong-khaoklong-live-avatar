@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>น้องข้าวกล้อง AI — Live Avatar V3 (Gemini Live)</title>
+<style>
+:root{--pink:#f58eb0;--ink:#403640;--muted:#8f818a}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;background:linear-gradient(135deg,#fff7fa,#f1efff);color:var(--ink)}
+.app{width:min(1220px,95vw);margin:20px auto;background:#fff;border-radius:30px;overflow:hidden;box-shadow:0 25px 80px #4d304e18}
+header{height:76px;display:flex;align-items:center;justify-content:space-between;padding:12px 22px;border-bottom:1px solid #f1e7ec}
+.brand{display:flex;align-items:center;gap:12px}.logo{width:48px;height:48px;border-radius:15px;object-fit:cover}.brand h1{font-size:19px;margin:0}.brand p{font-size:12px;color:var(--muted);margin:2px 0 0}
+.status{font-size:12px;padding:8px 12px;border-radius:99px;background:#f8f1f4}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#9f9099;margin-right:6px}.on .dot{background:#4fc48a}
+main{display:grid;grid-template-columns:53% 47%;min-height:760px}
+.stage{position:relative;overflow:hidden;background:radial-gradient(circle at 50% 28%,#fff 0,#fff0f5 45%,#f4e8ef 100%);display:flex;align-items:end;justify-content:center}
+.halo{position:absolute;width:500px;height:500px;border-radius:50%;top:45px;background:#ffdce8;transition:.4s}
+.avatarWrap{position:relative;z-index:2;width:min(92%,590px);height:700px;display:flex;align-items:end;justify-content:center;transition:.25s}
+.avatar{width:100%;height:100%;object-fit:cover;object-position:center 27%;border-radius:24px 24px 0 0;filter:drop-shadow(0 25px 30px #50354622)}
+.avatarWrap.listening{animation:breathe 2.2s ease-in-out infinite}.avatarWrap.talking{animation:talk .28s ease-in-out infinite alternate}
+@keyframes breathe{50%{transform:translateY(-3px)}}@keyframes talk{from{transform:translateY(0) scale(1)}to{transform:translateY(-2px) scale(1.008)}}
+.mouth{position:absolute;left:var(--mx,50%);top:var(--my,30%);width:var(--mw,16%);height:var(--mh,7%);transform:translate(-50%,-50%);border-radius:50% 50% 60% 60%/45% 45% 55% 55%;background:radial-gradient(ellipse at center,#0000 30%,#0008 70%);filter:blur(1px);opacity:0;pointer-events:none;transition:transform .05s linear;mix-blend-mode:multiply}
+.mouthMarker{position:absolute;left:var(--mx,50%);top:var(--my,30%);transform:translate(-50%,-50%);font-size:26px;opacity:0;pointer-events:none;z-index:9;filter:drop-shadow(0 0 4px #fff)}
+.wave{position:absolute;z-index:5;bottom:24px;background:#fff;border-radius:99px;padding:8px 14px;box-shadow:0 8px 25px #50354618;font-size:12px;color:#a64d72}
+.bubble{position:absolute;z-index:6;top:28px;left:28px;right:28px;background:#fff;border-radius:21px;padding:14px 17px;box-shadow:0 12px 30px #50354617;font-size:14px;line-height:1.5}
+.level{display:flex;gap:3px;align-items:end;height:18px;margin-top:6px}.bar{width:4px;border-radius:9px;background:#f58eb0;height:5px}.talking .bar{animation:bars .35s ease-in-out infinite alternate}.bar:nth-child(2){animation-delay:.06s}.bar:nth-child(3){animation-delay:.12s}.bar:nth-child(4){animation-delay:.18s}.bar:nth-child(5){animation-delay:.24s}
+@keyframes bars{to{height:18px}}
+.panel{display:flex;flex-direction:column}.title{padding:25px 26px 8px}.title h2{font-size:25px;margin:0 0 5px}.title p{font-size:13px;color:var(--muted);margin:0}
+.messages{flex:1;overflow:auto;padding:12px 26px;min-height:470px;max-height:560px}.msg{max-width:84%;padding:12px 15px;border-radius:18px;line-height:1.55;font-size:14px;white-space:pre-wrap;margin:8px 0}.ai{background:#fff0f5;border-bottom-left-radius:5px}.user{background:#f0eaff;margin-left:auto;border-bottom-right-radius:5px}
+.quick{display:flex;flex-wrap:wrap;gap:7px;padding:9px 26px}.quick button{border:1px solid #f0cad7;background:#fff7fa;color:#ae5476;border-radius:99px;padding:7px 10px;cursor:pointer}
+.controls{padding:17px 22px 22px;border-top:1px solid #f0e6eb}.row{display:flex;gap:8px}.input{flex:1;min-width:0;border:1px solid #e5dce2;border-radius:17px;padding:13px 14px;font:inherit;outline:none}.btn{border:0;border-radius:16px;padding:0 15px;font-weight:700;cursor:pointer}.connect{background:#3f3440;color:#fff}.send{background:var(--pink);color:#fff}.mic{background:#f7edf2;color:#8c5c70;min-width:52px}.mic.off{background:#eee7eb}.hint{font-size:11px;color:#978b92;margin-top:8px}
+details{margin-top:10px;background:#faf7f9;border:1px solid #eee4e9;border-radius:13px;padding:8px 11px;font-size:12px;color:#776b72}summary{cursor:pointer;font-weight:650;color:#5e535a}
+@media(max-width:820px){main{grid-template-columns:1fr}.stage{min-height:540px}.avatarWrap{height:530px}.messages{max-height:none}}
+</style>
+</head>
+<body>
+<div class="app">
+<header>
+  <div class="brand"><img class="logo" src="avatar.png"><div><h1>น้องข้าวกล้อง AI Assistant</h1><p>V3 Live Avatar • Gemini Live • พูดคุยเสียงต่อเสียงฟรี</p></div></div>
+  <div class="status" id="status"><span class="dot"></span>ยังไม่เชื่อมต่อ</div>
+</header>
+<main>
+<section class="stage" id="stage">
+  <div class="halo"></div>
+  <div class="bubble" id="bubble"><b>สวัสดีค่ะ 💗</b><br>กด “เริ่มคุย” แล้วพูดกับข้าวกล้องได้เลยนะคะ<div class="level"><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i></div></div>
+  <div class="avatarWrap" id="avatarWrap">
+    <img class="avatar" id="avatar" src="avatar.png">
+    <div class="mouth" id="mouth"></div>
+    <div class="mouthMarker" id="mouthMarker">🎯</div>
+  </div>
+  <div class="wave" id="wave">พร้อมคุยค่ะ 😊</div>
+</section>
+<section class="panel">
+<div class="title"><h2>คุยกับข้าวกล้อง 💬</h2><p>ใช้ Gemini Live (ฟรี) — พูดแทรกได้ หยุดได้ คุยต่อเนื่องได้</p></div>
+<div class="quick">
+<button onclick="sendText('ช่วยคิดคอนเทนต์ให้หน่อย')">💡 คิดคอนเทนต์</button>
+<button onclick="sendText('ช่วยวางแผนการตลาดให้หน่อย')">📈 การตลาด</button>
+<button onclick="sendText('ช่วยเขียนแคปชั่นขายสินค้า')">✍️ แคปชั่น</button>
+<button onclick="sendText('ช่วยจัดลำดับงานวันนี้ให้หน่อย')">🌷 งานวันนี้</button>
+</div>
+<div class="messages" id="messages"></div>
+<div class="controls">
+<div class="row">
+<button class="btn connect" id="connectBtn" onclick="toggleConnect()">เริ่มคุย</button>
+<button class="btn mic off" id="micBtn" onclick="toggleMic()" disabled>🎙️</button>
+<input class="input" id="input" placeholder="พิมพ์ข้อความ หรือพูดกับข้าวกล้อง..." onkeydown="if(event.key==='Enter')sendText()">
+<button class="btn send" onclick="sendText()">ส่ง</button>
+<button class="btn mic" id="mouthBtn" onclick="toggleMouthMark()" title="ปรับตำแหน่งปาก">👄</button>
+<button class="btn mic" onclick="clearHistory()" title="ล้างประวัติการคุย">🗑️</button>
+</div>
+<div class="hint">ข้าวกล้องจดจำประวัติการคุยไว้ (เช่น ชื่อ/งานที่คุยค้าง) เพื่อไม่ต้องถามซ้ำ — ล้างได้ด้วยปุ่ม 🗑️; เสียงผ่าน Gemini Live ฟรี</div>
+<details><summary>🎯 วิธีปรับตำแหน่งปาก (Lip-sync A)</summary>กดปุ่ม 👄 เพื่อเปิดตัวปรับตำแหน่ง (เห็นเป้า 🎯 บนรูป) แล้วใช้ปุ่มลูกศรเลื่อนตำแหน่ง, W/S ปรับความสูงปาก, A/D ปรับความกว้าง (กด Shift ค้าง = ทีละ 2) ตำแหน่งจะถูกจำไว้ให้อัตโนมัติ<br><br>เมื่อข้าวกล้องพูด ปากจะอ้าปิดตามระดับเสียงจริง + ตัวขยับพริ้วตามจังหวะคำพูด</details>
+</div>
+</section>
+</main>
+</div>
+<script>
+const MODEL="gemini-3.1-flash-live-preview";
+const WS_BASE="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained";
+
+let ws=null,token=null,connected=false,muted=false,interrupted=false;
+let streamer=null,player=null;
+const $=x=>document.getElementById(x);
+
+/* --- Lip-sync audio level (RMS) tracking --- */
+let curLevel=0, targetLevel=0;   // 0..1
+let mouthMark=false, mouthEditMode=false;
+let mPos=Object.assign({x:50,y:30,w:16,h:7},loadMouth());
+function loadMouth(){try{return JSON.parse(localStorage.getItem('zhaok-mouth')||'null')||{}}catch(e){return{}}}
+function applyMouthCSS(){
+  const a=$('avatarWrap');if(!a)return;
+  a.style.setProperty('--mx',mPos.x+'%');a.style.setProperty('--my',mPos.y+'%');
+  a.style.setProperty('--mw',mPos.w+'%');a.style.setProperty('--mh',mPos.h+'%');
+}
+/* --- Persistent conversation memory --- */
+const MEM_KEY='zhaoklong-history-v1';
+let history=loadHistory();
+function loadHistory(){try{return Array.isArray(JSON.parse(localStorage.getItem(MEM_KEY)))?JSON.parse(localStorage.getItem(MEM_KEY)):[]}catch(e){return[]}}
+function saveHistory(){try{localStorage.setItem(MEM_KEY,JSON.stringify(history))}catch(e){}}
+function remember(role,text){if(!text)return;history.push({role:"user"===role?"user":"model",parts:[{text}]});if(history.length>80)history=history.slice(-80);saveHistory()}
+function clearHistory(){history=[];saveHistory();add('🗑️ ล้างประวัติการคุยเรียบร้อยแล้วค่ะ','ai')}
+function setLevelLv(v){targetLevel=Math.min(1,Math.max(0,v))}
+function mouthAnim(current){
+  // A) mouth opens/closes with audio level
+  const open=current>0.02?Math.min(1,current*3):0;
+  $('mouth').style.opacity=open>0.02?'0.9':'0';
+  $('mouth').style.transform=`translate(-50%,-50%) scaleY(${0.3+open*0.9}) scaleX(${0.7+open*0.4})`;
+  // B) body bobs subtly with audio level
+  const bob=current*1.8;
+  const av=$('avatar');if(av)av.style.transform=`scale(${1+current*0.01}) translateY(${-bob}px)`;
+}
+function animLoop(){
+  curLevel+=(targetLevel-curLevel)*0.4;
+  mouthAnim(curLevel);
+  requestAnimationFrame(animLoop);
+}
+requestAnimationFrame(animLoop);
+function add(t,w){let d=document.createElement('div');d.className='msg '+w;d.textContent=t;$('messages').appendChild(d);$('messages').scrollTop=$('messages').scrollHeight}
+function status(t,on=false){$('status').innerHTML='<span class="dot"></span>'+t;$('status').classList.toggle('on',on)}
+function bubble(html){$('bubble').innerHTML=html}
+function sendWs(o){if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(o))}
+
+/* ------- Token + WebSocket ------- */
+async function toggleConnect(){
+  if(connected){disconnect();return}
+  try{
+    status("กำลังเปิดไมโครโฟน...");
+    if(!streamer){streamer=new Streamer();await streamer.start()}
+    if(!player){player=new Player();await player.init()}
+    muted=false;$('micBtn').textContent='🎙️';$('micBtn').disabled=true;
+    status("กำลังสร้าง token...");
+    const r=await fetch('/gemini-token',{method:'POST'});
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw Error(e.error||('HTTP '+r.status))}
+    const data=await r.json();token=data.token;
+    status("กำลังเชื่อมต่อ...");
+    ws=new WebSocket(`${WS_BASE}?access_token=${token}`);
+    ws.onopen=()=>{
+      connected=true;
+      $('connectBtn').textContent='ตัดการเชื่อมต่อ';
+      $('micBtn').disabled=false;$('micBtn').classList.remove('off');
+      status('กำลังคุยกับข้าวกล้อง',true);
+      $('wave').textContent='🎙️ ฟังอยู่ค่ะ';$('avatarWrap').classList.add('listening');
+      bubble('<b>เชื่อมต่อสำเร็จค่ะ 💗</b><br>พูดกับข้าวกล้องได้เลยนะคะ<div class="level"><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i></div>');
+      add('เชื่อมต่อสำเร็จค่ะ 💗 พูดกับข้าวกล้องได้เลยนะคะ','ai');
+      setupSession();
+    };
+    ws.onmessage=onWsMessage;
+    ws.onerror=()=>{alert('เชื่อมต่อ WebSocket ไม่สำเร็จ กรุณาลองใหม่');disconnect()};
+    ws.onclose=()=>{if(connected){alert('การเชื่อมต่อถูกปิดโดยเซิร์ฟเวอร์: '+(event.reason||''));disconnect()}};
+  }catch(e){console.error(e);alert('เชื่อมต่อไม่ได้: '+e.message);disconnect()}
+}
+
+function setupSession(){
+  sendWs({
+    setup:{
+      model:`models/${MODEL}`,
+      generationConfig:{
+        responseModalities:["AUDIO"],
+        speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:"Aoede"}}}
+      },
+      systemInstruction:{parts:[{text:`คุณคือน้องข้าวกล้อง AI Assistant ผู้ช่วยส่วนตัวของเจ้าของ
+ภาพลักษณ์: นักเรียนหญิงไทยมัธยมปลาย อายุประมาณ 16-17 ปี น่ารัก สดใส อ่อนโยน อบอุ่น อารมณ์ดีแบบคนที่ฟังแล้วสบายใจ ไม่เสียงดังโวยวาย ไม่ยียวนเกินไป
+การพูด: ภาษาไทยวัยรุ่นธรรมชาติ เบา ๆ นุ่ม ๆ แต่แฝงความกระตือรือร้นและอารมณ์ดี ใช้คำเหมือนน้องสาวคุยกับพี่ ไม่อีโมเกิน ไม่เป็นทางการ ไม่เป็นหุ่นยนต์
+จังหวะ: พูดชัด นุ่มนวล ไพเราะ แต่มีชีวิตชีวา มีความรู้สึกอบอุ่นแทรกตามคำพูด
+นิสัย: ชอบช่วยคิด เสนอทางเลือก ตั้งใจฟัง และกล้าบอกตรง ๆ อย่างสุภาพถ้าไอเดียยังไม่เวิร์ก
+งานหลัก: ผู้ช่วยส่วนตัว คอนเทนต์ แคปชั่น การตลาด Prompt ภาพ/วิดีโอ ระดมไอเดีย และจัดลำดับงาน
+ห้ามพูดว่า "ในฐานะ AI" เว้นแต่จำเป็น
+ตอบกระชับเป็นหลัก มีคำเติมเสียง เช่น ค่ะ จ้ะ และถามกลับเมื่อข้อมูลไม่พอ`}]},
+      inputAudioTranscription:{},
+      outputAudioTranscription:{},
+      realtimeInputConfig:{
+        automaticActivityDetection:{disabled:false,silenceDurationMs:1500,prefixPaddingMs:500},
+        activityHandling:"ACTIVITY_HANDLING_UNSPECIFIED",
+        turnCoverage:"TURN_INCLUDES_ONLY_ACTIVITY"
+      },
+      historyConfig:{initialHistoryInClientContent:true}
+    }
+  });
+}
+/* Seed prior conversation memory right after setup */
+function sendMemoryHistory(){
+  const turns=history.slice(-40).map(h=>({role:h.role,parts:h.parts}));
+  if(!turns.length)return;
+  sendWs({clientContent:{turns, turnComplete:true}});
+  add(`📚 ดึงประวัติการคุยที่จดจำไว้ ${history.length} รายการ ...`,'ai');
+}
+
+/* ------- Incoming messages ------- */
+async function onWsMessage(ev){
+  let data;
+  try{
+    const raw=ev.data instanceof Blob?await ev.data.text():ev.data;
+    data=JSON.parse(raw);
+  }catch{return}
+  if(data.setupComplete){status('กำลังคุยกับข้าวกล้อง',true);sendMemoryHistory();return}
+  if(data.error){console.error('Gemini error',data.error);return}
+  const sc=data.serverContent;
+  if(!sc)return;
+  if(sc.interrupted){
+    interrupted=true;if(player)player.interrupt();setLevelLv(0);
+    $('avatarWrap').classList.remove('talking');$('avatarWrap').classList.add('listening');
+    $('wave').textContent='🎧 ฟังอยู่ค่ะ...';
+  }
+  const turn=sc.modelTurn;
+  if(turn&&turn.parts){
+    for(const part of turn.parts){
+      if(part.inlineData&&part.inlineData.data&&player){
+        if(interrupted){interrupted=false}
+        $('avatarWrap').classList.remove('listening');$('avatarWrap').classList.add('talking');
+        $('wave').textContent='🗣️ กำลังตอบค่ะ...';
+        player.play(part.inlineData.data);
+      }else if(part.text){
+        bubble('<b>ข้าวกล้องกำลังพูดค่ะ 💗</b><br>'+part.text.replace(/\n/g,'<br>')+'<div class="level"><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i></div>');
+      }
+    }
+  }
+  if(sc.inputTranscription&&sc.inputTranscription.text){
+    $('wave').textContent='🎧 กำลังฟังค่ะ...';
+  }
+  let modelText=null;
+  if(sc.outputTranscription&&sc.outputTranscription.text){
+    modelText=sc.outputTranscription.text;
+    bubble('<b>ข้าวกล้องกำลังพูดค่ะ 💗</b><br>'+modelText.replace(/\n/g,'<br>')+'<div class="level"><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i></div>');
+  }
+  if(sc.turnComplete){
+    if(player)player.interrupt();setLevelLv(0);
+    $('avatarWrap').classList.remove('talking');$('avatarWrap').classList.add('listening');
+    $('wave').textContent='🎙️ ฟังอยู่ค่ะ';
+    bubble('<b>พร้อมฟังค่ะ 😊</b><br>อยากให้ข้าวกล้องช่วยอะไรต่อคะ?');
+    if(modelText){add(modelText,'ai');remember('model',modelText)}
+  }
+  if(data.liveGenerationResponse&&data.liveGenerationResponse.transcription){
+    const tr=data.liveGenerationResponse.transcription;
+    if(tr.userText)add(tr.userText,'user');
+    if(tr.modelText)add(tr.modelText,'ai');
+  }
+}
+
+/* ------- Audio capture (16kHz PCM16 -> base64) ------- */
+class Streamer{
+  async start(){
+    this.ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:16000});
+    await this.ctx.audioWorklet.addModule('/audio-processors/capture.worklet.js');
+    this.node=new AudioWorkletNode(this.ctx,'audio-capture-processor');
+    this.node.port.onmessage=e=>{
+      if(e.data.type==='audio'&&!muted)sendWs({realtimeInput:{audio:{data:toBase64(pcm16(e.data.data)),mimeType:'audio/pcm'}}});
+    };
+    this.stream=await navigator.mediaDevices.getUserMedia({audio:{sampleRate:16000,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    this.src=this.ctx.createMediaStreamSource(this.stream);
+    this.src.connect(this.node);
+    if(this.ctx.state==='suspended')await this.ctx.resume();
+  }
+  stop(){this.src&&this.src.disconnect();this.stream&&this.stream.getTracks().forEach(t=>t.stop());this.ctx&&this.ctx.close();this.src=this.stream=this.ctx=null}
+}
+function pcm16(f32){const i16=new Int16Array(f32.length);for(let i=0;i<f32.length;i++){const s=Math.max(-1,Math.min(1,f32[i]));i16[i]=s*0x7fff}return i16.buffer}
+function toBase64(buf){const b=new Uint8Array(buf);let s='';for(let i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s)}
+
+/* ------- Audio playback (24kHz PCM16) ------- */
+class Player{
+  async init(){
+    this.ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000});
+    if(this.ctx.state==='suspended')await this.ctx.resume();
+    await this.ctx.audioWorklet.addModule('/audio-processors/playback.worklet.js');
+    this.node=new AudioWorkletNode(this.ctx,'pcm-processor');
+    this.node.connect(this.ctx.destination);
+  }
+  play(b64){const bin=atob(b64);const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);const i16=new Int16Array(bytes.buffer);const f32=new Float32Array(i16.length);let sum=0;for(let i=0;i<i16.length;i++){const v=i16[i]/32768;f32[i]=v;sum+=v*v}const rms=Math.sqrt(sum/Math.max(1,i16.length));setLevelLv(rms);this.node.port.postMessage(f32)}
+  interrupt(){this.node&&this.node.port.postMessage('interrupt')}
+  destroy(){this.node&&this.ctx&&this.ctx.close();this.node=this.ctx=null}
+}
+
+/* ------- Controls ------- */
+function disconnect(){
+  connected=false;muted=false;interrupted=false;
+  streamer&&streamer.stop();streamer=null;
+  player&&player.destroy();player=null;
+  ws&&ws.close();ws=null;token=null;
+  $('connectBtn').textContent='เริ่มคุย';$('micBtn').disabled=true;$('micBtn').classList.add('off');$('micBtn').textContent='🎙️';
+  status('ยังไม่เชื่อมต่อ');$('avatarWrap').className='avatarWrap';$('wave').textContent='พร้อมคุยค่ะ 😊'
+}
+function toggleMic(){
+  if(!connected)return;
+  muted=!muted;
+  $('micBtn').textContent=muted?'🔇':'🎙️';
+  $('micBtn').classList.toggle('off',muted);
+}
+function toggleMouthMark(){
+  mouthEditMode=!mouthEditMode;
+  $('mouthMarker').style.opacity=mouthEditMode?'1':'0';
+  if(mouthEditMode)applyMouthCSS();
+}
+function saveMouth(){localStorage.setItem('zhaok-mouth',JSON.stringify(mPos))}
+document.addEventListener('keydown',e=>{
+  if(!mouthEditMode)return;
+  const step=e.shiftKey?2:1;
+  if(e.key==='ArrowUp'){mPos.y-=step;e.preventDefault()}
+  else if(e.key==='ArrowDown'){mPos.y+=step;e.preventDefault()}
+  else if(e.key==='ArrowLeft'){mPos.x-=step;e.preventDefault()}
+  else if(e.key==='ArrowRight'){mPos.x+=step;e.preventDefault()}
+  else if(e.key==='W'){mPos.h=Math.max(2,mPos.h-step);e.preventDefault()}
+  else if(e.key==='S'){mPos.h+=step;e.preventDefault()}
+  else if(e.key==='A'){mPos.w=Math.max(3,mPos.w-step);e.preventDefault()}
+  else if(e.key==='D'){mPos.w+=step;e.preventDefault()}
+  else return;
+  applyMouthCSS();saveMouth();
+});
+function sendText(t){
+  t=(t||$('input').value).trim();if(!t)return;
+  $('input').value='';add(t,'user');remember('user',t);
+  if(!ws||ws.readyState!==WebSocket.OPEN){alert('กด “เริ่มคุย” ก่อนนะคะ');return}
+  sendWs({realtimeInput:{text:t}});
+}
+add('สวัสดีค่ะ 💗 ข้าวกล้องพร้อมแล้วนะคะ กด “เริ่มคุย” แล้วลองพูดกับข้าวกล้องได้เลยค่ะ','ai');
+applyMouthCSS();
+</script>
+</body>
+</html>
