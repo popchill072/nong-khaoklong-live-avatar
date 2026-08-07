@@ -28,7 +28,33 @@ main{display:grid;grid-template-columns:53% 47%;min-height:760px}
 .quick{display:flex;flex-wrap:wrap;gap:7px;padding:9px 26px}.quick button{border:1px solid #f0cad7;background:#fff7fa;color:#ae5476;border-radius:99px;padding:7px 10px;cursor:pointer}
 .controls{padding:17px 22px 22px;border-top:1px solid #f0e6eb}.row{display:flex;gap:8px}.input{flex:1;min-width:0;border:1px solid #e5dce2;border-radius:17px;padding:13px 14px;font:inherit;outline:none}.btn{border:0;border-radius:16px;padding:0 15px;font-weight:700;cursor:pointer}.connect{background:#3f3440;color:#fff}.send{background:var(--pink);color:#fff}.mic{background:#f7edf2;color:#8c5c70;min-width:52px}.mic.off{background:#eee7eb}.hint{font-size:11px;color:#978b92;margin-top:8px}
 details{margin-top:10px;background:#faf7f9;border:1px solid #eee4e9;border-radius:13px;padding:8px 11px;font-size:12px;color:#776b72}summary{cursor:pointer;font-weight:650;color:#5e535a}
-@media(max-width:820px){main{grid-template-columns:1fr}.stage{min-height:540px}.avatarWrap{height:530px}.messages{max-height:none}}
+@media(max-width:820px){
+  html,body{height:100%}
+  .app{width:100%;min-height:100dvh;margin:0;border-radius:0;box-shadow:none;display:flex;flex-direction:column}
+  header{height:auto;padding:10px 14px;flex-wrap:wrap;gap:8px}
+  .logo{width:42px;height:42px}.brand h1{font-size:16px}.brand p{font-size:11px}
+  .status{font-size:11px;padding:6px 10px}
+  main{grid-template-columns:1fr;flex:1;display:flex;flex-direction:column;min-height:0}
+  .stage{min-height:0;height:44dvh;order:-1}
+  .avatarWrap{height:100%}
+  .bubble{top:14px;left:14px;right:14px;font-size:13px;padding:11px 13px}
+  .wave{bottom:14px;padding:7px 12px}
+  .panel{flex:1;display:flex;flex-direction:column;min-height:0}
+  .title{padding:16px 18px 6px}.title h2{font-size:20px}.title p{font-size:12px}
+  .messages{flex:1;min-height:0;max-height:none;padding:10px 18px}
+  .controls{padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px));position:sticky;bottom:0;background:#fff}
+  .row{flex-wrap:nowrap}
+  .input{font-size:16px;padding:13px 12px}
+  .btn{padding:0 13px;min-height:46px}
+  .mic{min-width:46px}.send,.connect{min-width:78px}
+}
+@media(max-width:460px){
+  main{height:calc(100dvh - 96px)}
+  .stage{height:38vh}
+  .quick button{font-size:12px;padding:6px 9px}
+  .brand p{display:none}
+  .mouthMarker{font-size:22px}
+}
 </style>
 </head>
 <body>
