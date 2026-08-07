@@ -219,8 +219,9 @@ function setupSession(){
         turnCoverage:"TURN_INCLUDES_ONLY_ACTIVITY"
       },
       historyConfig:{initialHistoryInClientContent:true},
-      tools:[{
-        functionDeclarations:[{
+      tools:[
+        {googleSearch:{}},
+        {functionDeclarations:[{
           name:"generate_image",
           description:"Generate an image (e.g. poster, logo, infographic, illustration, content art) from a text prompt. Call this when the user asks to create/make/generate an image, poster, logo, artwork, picture or visualizing content.",
           parameters:{
