@@ -1,3 +1,11 @@
-name = "nong-khaoklong-ai-v3"
+name = "nong-khaoklong-live-avatar"
+main = "worker.js"
 compatibility_date = "2024-11-01"
-pages_build_output_dir = "./public"
+
+# Serve static files from ./public (index.html, worklets, images)
+[assets]
+directory = "./public"
+not_found_handling = "single-page-application"
+
+# Local dev: read GEMINI_API_KEY from .env via `wrangler dev`
+# (set the real secret in Cloudflare dashboard: Settings > Variables and Secrets)
