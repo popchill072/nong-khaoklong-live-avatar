@@ -89,6 +89,8 @@ details{margin-top:10px;background:#faf7f9;border:1px solid #eee4e9;border-radiu
 <button class="btn mic off" id="micBtn" onclick="toggleMic()" disabled>🎙️</button>
 <input class="input" id="input" placeholder="พิมพ์ข้อความ หรือพูดกับข้าวกล้อง..." onkeydown="if(event.key==='Enter')sendText()">
 <button class="btn send" onclick="sendText()">ส่ง</button>
+<button class="btn mic" onclick="uploadMedia()" title="ส่งภาพ/วิดีโอให้ข้าวกล้องวิเคราะห์" style="min-width:46px">🖼️</button>
+<input type="file" id="mediaInput" accept="image/*,video/*" style="display:none" onchange="handleFile(event)">
 <button class="btn mic" id="mouthBtn" onclick="toggleMouthMark()" title="ปรับตำแหน่งปาก">👄</button>
 <button class="btn mic" onclick="clearHistory()" title="ล้างประวัติการคุย">🗑️</button>
 </div>
@@ -355,6 +357,101 @@ function showPromptFallback(prompt,aspect,reason){
 }
 function sendToolResult(id,args){
   sendWs({toolResponse:{functionResponses:[{id,response:{result:"ok",args}}]}});
+}
+
+/* ------- Media upload (image / video frame) analysis ------- */
+function uploadMedia(){$('mediaInput').click()}
+function handleFile(e){
+  const file=e.target.files[0];
+  e.target.value='';
+  if(!file)return;
+  add('🖼️ กำลังนำไฟล์: '+file.name+' เข้าสู่การวิเคราะห์...','user');
+  if(file.type.startsWith('video/'))sendVideo(file);
+  else sendImage(file);
+}
+async function sendImage(file){
+  try{
+    const {b64,mime}=await fileToJpeg(file);
+    addMediaPreview(b64,mime);
+    sendMediaFrame(b64,mime);
+    add('ส่งภาพแล้วค่ะ! ถามข้าวกล้องเกี่ยวกับสิ่งที่เห็นได้เลย','user');
+  }catch(err){add('❌ อ่านภาพไม่ได้: '+err.message,'ai')}
+}
+async function sendVideo(file){
+  try{
+    const frames=await extractFrames(file);
+    if(!frames.length)throw Error('ไม่สามารถดึงเฟรมจากวิดีโอได้');
+    add(`ได้ ${frames.length} เฟรมจากวิดีโอ → ส่งให้ข้าวกล้องแล้ว`,'user');
+    frames.forEach(b=>addMediaPreview(b,'image/jpeg'));
+    for(const b of frames){sendMediaFrame(b,'image/jpeg');await new Promise(r=>setTimeout(r,150))}
+  }catch(err){add('❌ วิเคราะห์วิดีโอไม่ได้: '+err.message,'ai')}
+}
+function sendMediaFrame(b64,mime){
+  if(ws&&ws.readyState===WebSocket.OPEN){
+    ws.send(JSON.stringify({realtimeInput:{video:{data:b64,mimeType:mime}}}));
+  }else{add('ยังไม่ได้เชื่อมต่อ — กด “เริ่มคุย” ก่อนนะคะ','ai')}
+}
+function addMediaPreview(b64,mime){
+  const w=$('messages');
+  const wrap=document.createElement('div');
+  wrap.className='msg ai';
+  const im=document.createElement('img');
+  im.src=`data:${mime};base64,${b64}`;
+  im.style.maxWidth='100%';im.style.borderRadius='12px';
+  wrap.appendChild(im);
+  w.appendChild(wrap);
+  w.scrollTop=w.scrollHeight;
+}
+async function fileToJpeg(file){
+  const url=URL.createObjectURL(file);
+  return new Promise((res,rej)=>{
+    const img=new Image();
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      try{
+        const max=1024;
+        const scale=Math.min(1,max/img.naturalWidth,max/img.naturalHeight);
+        const cv=document.createElement('canvas');
+        cv.width=Math.max(1,Math.round(img.naturalWidth*scale));
+        cv.height=Math.max(1,Math.round(img.naturalHeight*scale));
+        cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
+        const b64=cv.toDataURL('image/jpeg',0.8).split(',')[1];
+        res({b64,mime:'image/jpeg'});
+      }catch(e){rej(e)}
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('อ่านภาพไม่สำเร็จ'))};
+    img.src=url;
+  });
+}
+function extractFrames(file){
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(file);
+    const v=document.createElement('video');
+    v.muted=true;v.preload='auto';v.src=url;
+    v.onloadedmetadata=()=>{
+      const dur=(v.duration&&isFinite(v.duration))?v.duration:5;
+      const count=Math.min(5,Math.max(1,Math.floor(dur))); // up to ~5 frames (1 fps)
+      const times=[];
+      for(let i=0;i<count;i++)times.push(Math.min(dur-0.05,((i+0.5)/count)*dur));
+      const frames=[];
+      let idx=0;
+      const grab=()=>{
+        if(idx>=times.length){URL.revokeObjectURL(url);res(frames);return}
+        v.currentTime=times[idx];
+        v.onseeked=()=>{
+          try{
+            const w=768;const h=Math.max(1,Math.round(w*(v.videoHeight/v.videoWidth)));
+            const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+            cv.getContext('2d').drawImage(v,0,0,w,h);
+            frames.push(cv.toDataURL('image/jpeg',0.7).split(',')[1]);
+          }catch(e){}
+          idx++;requestAnimationFrame(grab);
+        };
+      };
+      grab();
+    };
+    v.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('เปิดวิดีโอไม่ได้'))};
+  });
 }
 
 /* ------- Audio capture (16kHz PCM16 -> base64) ------- */
