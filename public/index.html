@@ -173,7 +173,7 @@ function setAvatarMode(mode){
   if(!avV)return;
   if(avV.dataset.src===mode)return;
   avV.dataset.src=mode;
-  avV.src=`videos/avatar-${mode}.webp`;
+  avV.src=`videos/av-${mode}.webp`;
   avV.style.display='block';avI.style.display='none';
 }
 setAvatarMode('idle');
