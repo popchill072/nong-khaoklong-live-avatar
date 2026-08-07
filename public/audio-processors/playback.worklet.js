@@ -3,6 +3,7 @@ class PCMProcessor extends AudioWorkletProcessor {
     super();
     this.audioQueue = [];
     this.currentOffset = 0;
+    this.volume = (sampleRate && this.options && this.options.volume) || 1.9;
     this.port.onmessage = (event) => {
       if (event.data === "interrupt") {
         this.audioQueue = [];
@@ -28,7 +29,10 @@ class PCMProcessor extends AudioWorkletProcessor {
       const remainingBuffer = currentBuffer.length - this.currentOffset;
       const copyLength = Math.min(remainingOutput, remainingBuffer);
       for (let i = 0; i < copyLength; i++) {
-        channel[outputIndex++] = currentBuffer[this.currentOffset++];
+        let s = currentBuffer[this.currentOffset++] * this.volume;
+        // soft clip (tanh) keeps gain high without harsh distortion
+        s = Math.tanh(s * 1.2) / 1.2;
+        channel[outputIndex++] = s;
       }
       if (this.currentOffset >= currentBuffer.length) {
         this.audioQueue.shift();

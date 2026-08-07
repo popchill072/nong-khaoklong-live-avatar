@@ -92,12 +92,7 @@ details{margin-top:10px;background:#faf7f9;border:1px solid #eee4e9;border-radiu
 <button class="btn mic" id="mouthBtn" onclick="toggleMouthMark()" title="ปรับตำแหน่งปาก">👄</button>
 <button class="btn mic" onclick="clearHistory()" title="ล้างประวัติการคุย">🗑️</button>
 </div>
-<div class="hint">ข้าวกล้องจดจำประวัติการคุยไว้ (เช่น ชื่อ/งานที่คุยค้าง) เพื่อไม่ต้องถามซ้ำ — ล้างได้ด้วยปุ่ม 🗑️; เสียงผ่าน Gemini Live ฟรี</div>
-<div style="margin-top:10px;display:flex;gap:6px;align-items:center;font-size:12px;color:#776b72">
-  <label for="memKeyInput" style="white-space:nowrap">🎒 รหัสความจำ:</label>
-  <input id="memKeyInput" class="input" style="flex:1;padding:7px 10px" placeholder="เติมรหัสเดียวกันทุกเครื่อง เพื่อจำได้ข้ามอุปกรณ์ (เช่น เลขหรือชื่อของคุณ)">
-  <button class="btn mic" onclick="saveMemKey()">บันทึก</button>
-</div>
+<div class="hint">ข้าวกล้องจดจำประวัติการคุยไว้กับคุณคนเดียว (เช่น ชื่อ/งานที่คุยค้าง) เพื่อไม่ต้องถามซ้ำ — ล้างได้ด้วยปุ่ม 🗑️; เสียงผ่าน Gemini Live ฟรี</div>
 <details><summary>🎯 วิธีปรับตำแหน่งปาก (Lip-sync A)</summary>กดปุ่ม 👄 เพื่อเปิดตัวปรับตำแหน่ง (เห็นเป้า 🎯 บนรูป) แล้วใช้ปุ่มลูกศรเลื่อนตำแหน่ง, W/S ปรับความสูงปาก, A/D ปรับความกว้าง (กด Shift ค้าง = ทีละ 2) ตำแหน่งจะถูกจำไว้ให้อัตโนมัติ<br><br>เมื่อข้าวกล้องพูด ปากจะอ้าปิดตามระดับเสียงจริง + ตัวขยับพริ้วตามจังหวะคำพูด</details>
 </div>
 </section>
@@ -121,32 +116,22 @@ function applyMouthCSS(){
   a.style.setProperty('--mx',mPos.x+'%');a.style.setProperty('--my',mPos.y+'%');
   a.style.setProperty('--mw',mPos.w+'%');a.style.setProperty('--mh',mPos.h+'%');
 }
-/* --- Persistent conversation memory (cloud KV, shared across devices) --- */
+/* --- Persistent conversation memory (cloud KV, single owner key) --- */
 const MEM_KEY='zhaoklong-history-v1';
-const MEMKEY_STORE='zhaoklong-memkey';
-let memKey='';
+const ME_KEY='me'; // single-owner: this instance remembers just you
 let history=[];
-try{memKey=localStorage.getItem(MEMKEY_STORE)||''}catch(e){}
-
-function getMemKey(){return memKey||localStorage.getItem(MEMKEY_STORE)||''}
-function setMemKeyUI(){const el=$('memKeyInput');if(el)el.value=getMemKey()}
-function saveMemKey(){memKey=($('memKeyInput').value||'').trim();try{localStorage.setItem(MEMKEY_STORE,memKey)}catch(e){}if(memKey)loadFromCloud();else history=[];add('🎒 ตั้งรหัสความจำแล้ว'+ (memKey?' (ใช้ได้ทุกเครื่อง)':' (ล้างรหัสแล้ว)'),'ai')}
 
 async function loadFromCloud(){
-  const k=getMemKey();if(!k)return;
   try{
-    const r=await fetch('/api/history?key='+encodeURIComponent(k));
+    const r=await fetch('/api/history?key='+ME_KEY);
     if(!r.ok)return;
     const d=await r.json();
-    if(Array.isArray(d.turns)&&d.turns.length){history=d.turns;add(`🎒 ดึงความจำของรหัส “${k}” มาแล้ว ${history.length} รายการ`,'ai')}
+    if(Array.isArray(d.turns)&&d.turns.length){history=d.turns;add(`🎒 ข้าวกล้องจำได้ว่าคุยกับคุณไว้ ${history.length} รายการ`,'ai')}
   }catch(e){console.error('mem load',e)}
 }
 function saveHistory(){
-  // backup to localStorage, then push to cloud if a key is set
-  try{localStorage.setItem(MEM_KEY,JSON.stringify(history))}catch(e){}
-  const k=getMemKey();if(!k)return;
   fetch('/api/history',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({key:k,turns:history})}).catch(()=>{});
+    body:JSON.stringify({key:ME_KEY,turns:history})}).catch(()=>{});
 }
 function remember(role,text){if(!text)return;history.push({role:"user"===role?"user":"model",parts:[{text}]});if(history.length>80)history=history.slice(-80);saveHistory()}
 function clearHistory(){history=[];saveHistory();add('🗑️ ล้างประวัติการคุยเรียบร้อยแล้วค่ะ','ai')}
@@ -166,7 +151,6 @@ function animLoop(){
   requestAnimationFrame(animLoop);
 }
 requestAnimationFrame(animLoop);
-setMemKeyUI();
 function add(t,w){let d=document.createElement('div');d.className='msg '+w;d.textContent=t;$('messages').appendChild(d);$('messages').scrollTop=$('messages').scrollHeight}
 function status(t,on=false){$('status').innerHTML='<span class="dot"></span>'+t;$('status').classList.toggle('on',on)}
 function bubble(html){$('bubble').innerHTML=html}
