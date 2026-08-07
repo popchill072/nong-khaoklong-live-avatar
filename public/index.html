@@ -116,20 +116,26 @@ function applyMouthCSS(){
   a.style.setProperty('--mx',mPos.x+'%');a.style.setProperty('--my',mPos.y+'%');
   a.style.setProperty('--mw',mPos.w+'%');a.style.setProperty('--mh',mPos.h+'%');
 }
-/* --- Persistent conversation memory (cloud KV, single owner key) --- */
+/* --- Persistent conversation memory (local-first + cloud KV backup) --- */
 const MEM_KEY='zhaoklong-history-v1';
-const ME_KEY='me'; // single-owner: this instance remembers just you
-let history=[];
+const ME_KEY='me'; // single owner
+let history=loadLocal();
+function loadLocal(){try{const h=JSON.parse(localStorage.getItem(MEM_KEY)||'[]');return Array.isArray(h)?h:[]}catch(e){return[]}}
+function saveLocal(){try{localStorage.setItem(MEM_KEY,JSON.stringify(history))}catch(e){}}
 
 async function loadFromCloud(){
   try{
     const r=await fetch('/api/history?key='+ME_KEY);
     if(!r.ok)return;
     const d=await r.json();
-    if(Array.isArray(d.turns)&&d.turns.length){history=d.turns;add(`🎒 ข้าวกล้องจำได้ว่าคุยกับคุณไว้ ${history.length} รายการ`,'ai')}
+    if(Array.isArray(d.turns)&&d.turns.length){
+      // cloud has more recent turns? use whichever is longer
+      if(d.turns.length>=history.length){history=d.turns;saveLocal()}
+    }
   }catch(e){console.error('mem load',e)}
 }
 function saveHistory(){
+  saveLocal();
   fetch('/api/history',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({key:ME_KEY,turns:history})}).catch(()=>{});
 }
