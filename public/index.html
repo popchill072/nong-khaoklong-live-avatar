@@ -277,10 +277,11 @@ async function onWsMessage(ev){
       }
     }
   }
+  let userText=null, modelText=null;
   if(sc.inputTranscription&&sc.inputTranscription.text){
+    userText=sc.inputTranscription.text;
     $('wave').textContent='🎧 กำลังฟังค่ะ...';
   }
-  let modelText=null;
   if(sc.outputTranscription&&sc.outputTranscription.text){
     modelText=sc.outputTranscription.text;
     bubble('<b>ข้าวกล้องกำลังพูดค่ะ 💗</b><br>'+modelText.replace(/\n/g,'<br>')+'<div class="level"><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i></div>');
@@ -290,12 +291,13 @@ async function onWsMessage(ev){
     $('avatarWrap').classList.remove('talking');$('avatarWrap').classList.add('listening');
     $('wave').textContent='🎙️ ฟังอยู่ค่ะ';
     bubble('<b>พร้อมฟังค่ะ 😊</b><br>อยากให้ข้าวกล้องช่วยอะไรต่อคะ?');
+    if(userText){add(userText,'user');remember('user',userText)}
     if(modelText){add(modelText,'ai');remember('model',modelText)}
   }
   if(data.liveGenerationResponse&&data.liveGenerationResponse.transcription){
     const tr=data.liveGenerationResponse.transcription;
-    if(tr.userText)add(tr.userText,'user');
-    if(tr.modelText)add(tr.modelText,'ai');
+    if(tr.userText){add(tr.userText,'user');remember('user',tr.userText)}
+    if(tr.modelText){add(tr.modelText,'ai');remember('model',tr.modelText)}
   }
 }
 
