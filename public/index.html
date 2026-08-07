@@ -69,6 +69,7 @@ details{margin-top:10px;background:#faf7f9;border:1px solid #eee4e9;border-radiu
   <div class="bubble" id="bubble"><b>สวัสดีค่ะ 💗</b><br>กด “เริ่มคุย” แล้วพูดกับข้าวกล้องได้เลยนะคะ<div class="level"><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i></div></div>
   <div class="avatarWrap" id="avatarWrap">
     <img class="avatar" id="avatar" src="avatar.png">
+    <video class="avatar avatarVideo" id="avatarVideo" autoplay loop muted playsinline preload="auto" style="display:none"></video>
     <div class="mouth" id="mouth"></div>
     <div class="mouthMarker" id="mouthMarker">🎯</div>
   </div>
@@ -159,6 +160,25 @@ function animLoop(){
   requestAnimationFrame(animLoop);
 }
 requestAnimationFrame(animLoop);
+
+/* ------- Video avatar (uses public/videos/*.mp4, auto-fallback to image) ------- */
+const AV_MODES=['idle','listening','talking']; // filenames: videos/avatar-{mode}.mp4
+let avMode='idle';
+const avV=document.getElementById('avatarVideo');
+const avI=document.getElementById('avatar');
+function setAvatarMode(mode){
+  if(!AV_MODES.includes(mode))mode='idle';
+  if(mode===avMode&&avV&&avV.src)return;
+  avMode=mode;
+  if(!avV)return;
+  avV.src=`videos/avatar-${mode}.mp4`;
+  avV.load();
+  avV.play().catch(()=>{});
+}
+if(avV){
+  avV.addEventListener('loadeddata',()=>{avV.style.display='block';avI.style.display='none'});
+  avV.addEventListener('error',()=>{avV.style.display='none';avI.style.display='block';avV.src=''});
+}
 function add(t,w){let d=document.createElement('div');d.className='msg '+w;d.textContent=t;$('messages').appendChild(d);$('messages').scrollTop=$('messages').scrollHeight}
 function status(t,on=false){$('status').innerHTML='<span class="dot"></span>'+t;$('status').classList.toggle('on',on)}
 function bubble(html){$('bubble').innerHTML=html}
@@ -184,7 +204,7 @@ async function toggleConnect(){
       $('connectBtn').textContent='ตัดการเชื่อมต่อ';
       $('micBtn').disabled=false;$('micBtn').classList.remove('off');
       status('กำลังคุยกับข้าวกล้อง',true);
-      $('wave').textContent='🎙️ ฟังอยู่ค่ะ';$('avatarWrap').classList.add('listening');
+      $('wave').textContent='🎙️ ฟังอยู่ค่ะ';$('avatarWrap').classList.add('listening');setAvatarMode('listening');
       bubble('<b>เชื่อมต่อสำเร็จค่ะ 💗</b><br>พูดกับข้าวกล้องได้เลยนะคะ<div class="level"><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i></div>');
       add('เชื่อมต่อสำเร็จค่ะ 💗 พูดกับข้าวกล้องได้เลยนะคะ','ai');
       setupSession();
@@ -274,6 +294,7 @@ async function onWsMessage(ev){
         if(interrupted){interrupted=false}
         $('avatarWrap').classList.remove('listening');$('avatarWrap').classList.add('talking');
         $('wave').textContent='🗣️ กำลังตอบค่ะ...';
+        setAvatarMode('talking');
         player.play(part.inlineData.data);
       }else if(part.text){
         bubble('<b>ข้าวกล้องกำลังพูดค่ะ 💗</b><br>'+part.text.replace(/\n/g,'<br>')+'<div class="level"><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i></div>');
@@ -292,6 +313,7 @@ async function onWsMessage(ev){
   if(sc.turnComplete){
     if(player)player.interrupt();setLevelLv(0);
     $('avatarWrap').classList.remove('talking');$('avatarWrap').classList.add('listening');
+    setAvatarMode('listening');
     $('wave').textContent='🎙️ ฟังอยู่ค่ะ';
     bubble('<b>พร้อมฟังค่ะ 😊</b><br>อยากให้ข้าวกล้องช่วยอะไรต่อคะ?');
     if(userText){add(userText,'user');remember('user',userText)}
@@ -495,7 +517,7 @@ function disconnect(){
   player&&player.destroy();player=null;
   ws&&ws.close();ws=null;token=null;
   $('connectBtn').textContent='เริ่มคุย';$('micBtn').disabled=true;$('micBtn').classList.add('off');$('micBtn').textContent='🎙️';
-  status('ยังไม่เชื่อมต่อ');$('avatarWrap').className='avatarWrap';$('wave').textContent='พร้อมคุยค่ะ 😊'
+  status('ยังไม่เชื่อมต่อ');$('avatarWrap').className='avatarWrap';$('wave').textContent='พร้อมคุยค่ะ 😊';setAvatarMode('idle')
 }
 function toggleMic(){
   if(!connected)return;
