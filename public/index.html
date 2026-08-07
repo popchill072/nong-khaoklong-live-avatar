@@ -70,7 +70,7 @@ details{margin-top:10px;background:#faf7f9;border:1px solid #eee4e9;border-radiu
   <div class="bubble" id="bubble"><b>สวัสดีค่ะ 💗</b><br>กด “เริ่มคุย” แล้วพูดกับข้าวกล้องได้เลยนะคะ<div class="level"><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i></div></div>
   <div class="avatarWrap" id="avatarWrap">
     <img class="avatar" id="avatar" src="avatar.png">
-    <video class="avatar avatarVideo" id="avatarVideo" autoplay loop muted playsinline preload="auto" style="display:none"></video>
+    <img class="avatar avatarVideo" id="avatarVideo" alt="" style="display:none">
     <div class="mouth" id="mouth"></div>
     <div class="mouthMarker" id="mouthMarker">🎯</div>
   </div>
@@ -173,13 +173,8 @@ function setAvatarMode(mode){
   if(!avV)return;
   if(avV.dataset.src===mode)return;
   avV.dataset.src=mode;
-  avV.src=`videos/avatar-${mode}.mp4`;
-  avV.load();
-  avV.play().catch(()=>{});
-}
-if(avV){
-  avV.addEventListener('loadeddata',()=>{avV.style.display='block';avI.style.display='none'});
-  avV.addEventListener('error',()=>{avV.style.display='none';avI.style.display='block';avV.dataset.src=''});
+  avV.src=`videos/avatar-${mode}.webp`;
+  avV.style.display='block';avI.style.display='none';
 }
 setAvatarMode('idle');
 function add(t,w){let d=document.createElement('div');d.className='msg '+w;d.textContent=t;$('messages').appendChild(d);$('messages').scrollTop=$('messages').scrollHeight}
