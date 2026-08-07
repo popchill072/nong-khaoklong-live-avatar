@@ -283,7 +283,7 @@ async function onWsMessage(ev){
   }
 }
 
-/* ------- Image generation tool ------- */
+/* ------- Image generation tool (hybrid: real image, fallback prompt) ------- */
 async function handleImageTool(fc){
   const prompt=(fc.args&&(fc.args.prompt||''))||'';
   const aspect=fc.args&&fc.args.aspectRatio?fc.args.aspectRatio:'1:1';
@@ -293,12 +293,13 @@ async function handleImageTool(fc){
   try{
     const r=await fetch('/api/image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,aspectRatio:aspect})});
     const d=await r.json();
-    if(!r.ok||!d.data)throw Error(d.error||('HTTP '+r.status));
-    addImageToChat(d.data,d.mimeType||'image/png');
-    sendToolResult(fc.id,[{prompt}],'success, image delivered to user');
+    if(r.ok&&d.data){addImageToChat(d.data,d.mimeType||'image/png');sendToolResult(fc.id,[{prompt}],'success, image delivered to user');return}
+    // Generation failed (quota/model) -> fall back to a copyable prompt
+    showPromptFallback(prompt,aspect,d&&d.error);
+    sendToolResult(fc.id,[{prompt}],'image quota/model unavailable, gave user the prompt instead: '+prompt);
   }catch(e){
-    add('❌ สร้างภาพไม่สำเร็จ: '+e.message,'ai');
-    sendToolResult(fc.id,[{prompt}],'error: '+e.message);
+    showPromptFallback(prompt,aspect,String(e&&e.message||e));
+    sendToolResult(fc.id,[{prompt}],'image tool error, gave user the prompt instead: '+prompt);
   }
 }
 function addImageToChat(b64,mime){
@@ -309,6 +310,28 @@ function addImageToChat(b64,mime){
   im.src=`data:${mime};base64,${b64}`;
   im.style.maxWidth='100%';im.style.borderRadius='12px';
   wrap.appendChild(im);
+  w.appendChild(wrap);
+  w.scrollTop=w.scrollHeight;
+}
+function showPromptFallback(prompt,aspect,reason){
+  const w=$('messages');
+  const wrap=document.createElement('div');
+  wrap.className='msg ai';
+  const h=document.createElement('div');h.style.fontWeight='600';h.style.marginBottom='6px';
+  h.textContent='🖼️ ระบบสร้างภาพชั่วคราวไม่ว่าง ส่ง prompt นี้ไปใช้กับเครื่องมือภาพแทนได้เลย:';
+  const box=document.createElement('textarea');
+  box.readOnly=true;
+  box.value=`${prompt}\n\n[อัตราส่วน: ${aspect}]`;
+  box.style.width='100%';box.style.minHeight='70px';box.style.border='1px solid #e5dce2';box.style.borderRadius='12px';box.style.padding='8px';box.style.font='inherit';box.style.boxSizing='border-box';box.style.margin='4px 0 8px';
+  const btn=document.createElement('button');
+  btn.className='btn mic';btn.textContent='📋 คัดลอก';
+  btn.onclick=async()=>{
+    try{await navigator.clipboard.writeText(box.value)}catch(e){box.select();document.execCommand('copy')}
+    btn.textContent='✅ คัดลอกแล้ว';
+    setTimeout(()=>{btn.textContent='📋 คัดลอก'},1600);
+  };
+  if(reason){const why=document.createElement('div');why.style.fontSize='11px';why.style.color='#978b92';why.style.marginBottom='4px';why.textContent='เหตุผล: '+reason;wrap.appendChild(why)}
+  wrap.appendChild(h);wrap.appendChild(box);wrap.appendChild(btn);
   w.appendChild(wrap);
   w.scrollTop=w.scrollHeight;
 }
