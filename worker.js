@@ -45,7 +45,7 @@ async function generateImage(request, env) {
   const seen = new Set();
   const payload = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+    generationConfig: { responseModalities: ["TEXT", "IMAGE"], imageConfig: { aspectRatio } },
   };
 
   let lastQuota = null;

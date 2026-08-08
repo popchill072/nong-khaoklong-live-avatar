@@ -15,13 +15,11 @@ main{display:grid;grid-template-columns:53% 47%;min-height:760px}
 .halo{position:absolute;width:500px;height:500px;border-radius:50%;top:45px;background:#ffdce8;transition:.4s}
 .avatarWrap{position:relative;z-index:2;width:min(92%,590px);height:700px;display:flex;align-items:end;justify-content:center;transition:.25s}
 .avatar{width:100%;height:100%;object-fit:cover;object-position:center 27%;border-radius:24px 24px 0 0;filter:drop-shadow(0 25px 30px #50354622)}
-.avatarVideo{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;object-position:center 27%;border-radius:24px 24px 0 0;filter:drop-shadow(0 25px 30px #50354622)}
+.avatarVideo{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;object-position:center 20%;border-radius:24px 24px 0 0;filter:drop-shadow(0 25px 30px #50354622)}
 .avatarWrap.listening{animation:breathe 2.2s ease-in-out infinite}.avatarWrap.talking{animation:talk .28s ease-in-out infinite alternate}
 @keyframes breathe{50%{transform:translateY(-3px)}}@keyframes talk{from{transform:translateY(0) scale(1)}to{transform:translateY(-2px) scale(1.008)}}
-.mouth{position:absolute;left:var(--mx,50%);top:var(--my,30%);width:var(--mw,16%);height:var(--mh,7%);transform:translate(-50%,-50%);border-radius:50% 50% 60% 60%/45% 45% 55% 55%;background:radial-gradient(ellipse at center,#0000 30%,#0008 70%);filter:blur(1px);opacity:0;pointer-events:none;transition:transform .05s linear;mix-blend-mode:multiply}
-.mouthMarker{position:absolute;left:var(--mx,50%);top:var(--my,30%);transform:translate(-50%,-50%);font-size:26px;opacity:0;pointer-events:none;z-index:9;filter:drop-shadow(0 0 4px #fff)}
 .wave{position:absolute;z-index:5;bottom:24px;background:#fff;border-radius:99px;padding:8px 14px;box-shadow:0 8px 25px #50354618;font-size:12px;color:#a64d72}
-.bubble{position:absolute;z-index:6;top:28px;left:28px;right:28px;background:#fff;border-radius:21px;padding:14px 17px;box-shadow:0 12px 30px #50354617;font-size:14px;line-height:1.5}
+.bubble{position:absolute;z-index:6;bottom:76px;left:24px;right:24px;background:#fff;border-radius:21px;padding:14px 17px;box-shadow:0 12px 30px #50354617;font-size:14px;line-height:1.5}
 .level{display:flex;gap:3px;align-items:end;height:18px;margin-top:6px}.bar{width:4px;border-radius:9px;background:#f58eb0;height:5px}.talking .bar{animation:bars .35s ease-in-out infinite alternate}.bar:nth-child(2){animation-delay:.06s}.bar:nth-child(3){animation-delay:.12s}.bar:nth-child(4){animation-delay:.18s}.bar:nth-child(5){animation-delay:.24s}
 @keyframes bars{to{height:18px}}
 .panel{display:flex;flex-direction:column}.title{padding:25px 26px 8px}.title h2{font-size:25px;margin:0 0 5px}.title p{font-size:13px;color:var(--muted);margin:0}
@@ -40,7 +38,7 @@ details{margin-top:10px;background:#faf7f9;border:1px solid #eee4e9;border-radiu
   main{grid-template-columns:1fr;flex:1;display:flex;flex-direction:column;min-height:0}
   .stage{min-height:0;height:44dvh;order:-1}
   .avatarWrap{height:100%}
-  .bubble{top:14px;left:14px;right:14px;font-size:13px;padding:11px 13px}
+  .bubble{bottom:70px;left:12px;right:12px;font-size:13px;padding:11px 13px}
   .wave{bottom:14px;padding:7px 12px}
   .panel{flex:1;display:flex;flex-direction:column;min-height:0}
   .title{padding:16px 18px 6px}.title h2{font-size:20px}.title p{font-size:12px}
@@ -54,9 +52,8 @@ details{margin-top:10px;background:#faf7f9;border:1px solid #eee4e9;border-radiu
 @media(max-width:460px){
   main{height:calc(100dvh - 96px)}
   .stage{height:38vh}
-  .quick button{font-size:12px;padding:6px 9px}
+.quick button{font-size:12px;padding:6px 9px}
   .brand p{display:none}
-  .mouthMarker{font-size:22px}
 }
 </style>
 </head>
@@ -71,10 +68,8 @@ details{margin-top:10px;background:#faf7f9;border:1px solid #eee4e9;border-radiu
   <div class="halo"></div>
   <div class="bubble" id="bubble"><b>สวัสดีค่ะ 💗</b><br>กด “เริ่มคุย” แล้วพูดกับข้าวกล้องได้เลยนะคะ<div class="level"><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i></div></div>
   <div class="avatarWrap" id="avatarWrap">
-    <img class="avatar" id="avatar" src="avatar.png">
+<img class="avatar" id="avatar" src="avatar.png">
     <img class="avatar avatarVideo" id="avatarVideo" alt="" style="display:none">
-    <div class="mouth" id="mouth"></div>
-    <div class="mouthMarker" id="mouthMarker">🎯</div>
   </div>
   <div class="wave" id="wave">พร้อมคุยค่ะ 😊</div>
 </section>
@@ -95,14 +90,12 @@ details{margin-top:10px;background:#faf7f9;border:1px solid #eee4e9;border-radiu
 <button class="btn send" onclick="sendText()">ส่ง</button>
 <button class="btn mic" onclick="uploadMedia()" title="ส่งภาพ/วิดีโอให้ข้าวกล้องวิเคราะห์" style="min-width:46px">🖼️</button>
 <input type="file" id="mediaInput" accept="image/*,video/*" style="display:none" onchange="handleFile(event)">
-<button class="btn mic" id="mouthBtn" onclick="toggleMouthMark()" title="ปรับตำแหน่งปาก">👄</button>
 <button class="btn mic" onclick="clearHistory()" title="ล้างประวัติการคุย">🗑️</button>
 </div>
 <div class="hint">ข้าวกล้องจดจำประวัติการคุยไว้กับคุณคนเดียว (เช่น ชื่อ/งานที่คุยค้าง) เพื่อไม่ต้องถามซ้ำ — ล้างได้ด้วยปุ่ม 🗑️; เสียงผ่าน Gemini Live ฟรี</div>
 <div class="selbar">
 <select class="sel" id="voiceSel" onchange="changeVoice(this.value)" title="เลือกเสียงข้าวกล้อง"></select>
 </div>
-<details><summary>🎯 วิธีปรับตำแหน่งปาก (Lip-sync A)</summary>กดปุ่ม 👄 เพื่อเปิดตัวปรับตำแหน่ง (เห็นเป้า 🎯 บนรูป) แล้วใช้ปุ่มลูกศรเลื่อนตำแหน่ง, W/S ปรับความสูงปาก, A/D ปรับความกว้าง (กด Shift ค้าง = ทีละ 2) ตำแหน่งจะถูกจำไว้ให้อัตโนมัติ<br><br>เมื่อข้าวกล้องพูด ปากจะอ้าปิดตามระดับเสียงจริง + ตัวขยับพริ้วตามจังหวะคำพูด</details>
 </div>
 </section>
 </main>
@@ -115,16 +108,8 @@ let ws=null,token=null,connected=false,muted=false,interrupted=false;
 let streamer=null,player=null;
 const $=x=>document.getElementById(x);
 
-/* --- Lip-sync audio level (RMS) tracking --- */
+/* --- Audio level (RMS) tracking for body bob --- */
 let curLevel=0, targetLevel=0;   // 0..1
-let mouthMark=false, mouthEditMode=false;
-let mPos=Object.assign({x:50,y:30,w:16,h:7},loadMouth());
-function loadMouth(){try{return JSON.parse(localStorage.getItem('zhaok-mouth')||'null')||{}}catch(e){return{}}}
-function applyMouthCSS(){
-  const a=$('avatarWrap');if(!a)return;
-  a.style.setProperty('--mx',mPos.x+'%');a.style.setProperty('--my',mPos.y+'%');
-  a.style.setProperty('--mw',mPos.w+'%');a.style.setProperty('--mh',mPos.h+'%');
-}
 /* --- Persistent conversation memory (local-first + cloud KV backup) --- */
 const MEM_KEY='zhaoklong-history-v1';
 const ME_KEY='me'; // single owner
@@ -151,18 +136,14 @@ function saveHistory(){
 function remember(role,text){if(!text)return;history.push({role:"user"===role?"user":"model",parts:[{text}]});if(history.length>80)history=history.slice(-80);saveHistory()}
 function clearHistory(){history=[];saveHistory();add('🗑️ ล้างประวัติการคุยเรียบร้อยแล้วค่ะ','ai')}
 function setLevelLv(v){targetLevel=Math.min(1,Math.max(0,v))}
-function mouthAnim(current){
-  // A) mouth opens/closes with audio level
-  const open=current>0.02?Math.min(1,current*3):0;
-  $('mouth').style.opacity=open>0.02?'0.9':'0';
-  $('mouth').style.transform=`translate(-50%,-50%) scaleY(${0.3+open*0.9}) scaleX(${0.7+open*0.4})`;
-  // B) body bobs subtly with audio level
+function bodyBob(current){
   const bob=current*1.8;
   const av=$('avatar');if(av)av.style.transform=`scale(${1+current*0.01}) translateY(${-bob}px)`;
 }
 function animLoop(){
-  curLevel+=(targetLevel-curLevel)*0.4;
-  mouthAnim(curLevel);
+  const rate=targetLevel>curLevel?0.7:0.10; // เปิดเร็ว (attack) ปิดช้า (release)
+  curLevel+=(targetLevel-curLevel)*rate;
+  bodyBob(curLevel);
   requestAnimationFrame(animLoop);
 }
 requestAnimationFrame(animLoop);
@@ -176,16 +157,17 @@ requestAnimationFrame(animLoop);
    av-* files stay as guaranteed fallbacks. */
 const AV_MODES=['idle','listening','talking'];
 const AV_POOLS={
-  idle:['idle2','idle3','av-idle'],
-  listening:['listen2','av-listening'],
-  talking:['talk2','talk3','av-talking'],
+  idle:['idle2','idle3','idle4','av-idle'],
+  listening:['listen2','listen3','av-listening'],
+  talking:['talk2','talk3','talk4','av-talking'],
 };
 const VOICES=[
   ['Puck','น่ารัก'],['Aoede','กลาง'],['Leda','สุภาพ'],['Kore','สดใส'],['Zephyr','เบาๆ']
 ];
 let avMode='idle';
 let pickCache={};
-let voiceId=loadSetting('zhaok-voice','Puck');
+let voiceId=loadSetting('zhaok-voice','Leda');
+saveSetting('zhaok-voice','Leda');
 function loadSetting(k,d){try{return localStorage.getItem(k)||d}catch(e){return d}}
 function saveSetting(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 const avV=document.getElementById('avatarVideo');
@@ -576,26 +558,6 @@ function toggleMic(){
   $('micBtn').textContent=muted?'🔇':'🎙️';
   $('micBtn').classList.toggle('off',muted);
 }
-function toggleMouthMark(){
-  mouthEditMode=!mouthEditMode;
-  $('mouthMarker').style.opacity=mouthEditMode?'1':'0';
-  if(mouthEditMode)applyMouthCSS();
-}
-function saveMouth(){localStorage.setItem('zhaok-mouth',JSON.stringify(mPos))}
-document.addEventListener('keydown',e=>{
-  if(!mouthEditMode)return;
-  const step=e.shiftKey?2:1;
-  if(e.key==='ArrowUp'){mPos.y-=step;e.preventDefault()}
-  else if(e.key==='ArrowDown'){mPos.y+=step;e.preventDefault()}
-  else if(e.key==='ArrowLeft'){mPos.x-=step;e.preventDefault()}
-  else if(e.key==='ArrowRight'){mPos.x+=step;e.preventDefault()}
-  else if(e.key==='W'){mPos.h=Math.max(2,mPos.h-step);e.preventDefault()}
-  else if(e.key==='S'){mPos.h+=step;e.preventDefault()}
-  else if(e.key==='A'){mPos.w=Math.max(3,mPos.w-step);e.preventDefault()}
-  else if(e.key==='D'){mPos.w+=step;e.preventDefault()}
-  else return;
-  applyMouthCSS();saveMouth();
-});
 function sendText(t){
   t=(t||$('input').value).trim();if(!t)return;
   $('input').value='';add(t,'user');remember('user',t);
@@ -603,7 +565,6 @@ function sendText(t){
   sendWs({realtimeInput:{text:t}});
 }
 add('สวัสดีค่ะ 💗 ข้าวกล้องพร้อมแล้วนะคะ กด “เริ่มคุย” แล้วลองพูดกับข้าวกล้องได้เลยค่ะ','ai');
-applyMouthCSS();
 </script>
 </body>
 </html>
