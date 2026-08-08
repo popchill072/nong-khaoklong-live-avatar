@@ -101,7 +101,6 @@ details{margin-top:10px;background:#faf7f9;border:1px solid #eee4e9;border-radiu
 <div class="hint">ข้าวกล้องจดจำประวัติการคุยไว้กับคุณคนเดียว (เช่น ชื่อ/งานที่คุยค้าง) เพื่อไม่ต้องถามซ้ำ — ล้างได้ด้วยปุ่ม 🗑️; เสียงผ่าน Gemini Live ฟรี</div>
 <div class="selbar">
 <select class="sel" id="voiceSel" onchange="changeVoice(this.value)" title="เลือกเสียงข้าวกล้อง"></select>
-<select class="sel" id="charSel" onchange="changeChar(this.value)" title="เลือกตัวละคร / ฉากวิดีโอ"></select>
 </div>
 <details><summary>🎯 วิธีปรับตำแหน่งปาก (Lip-sync A)</summary>กดปุ่ม 👄 เพื่อเปิดตัวปรับตำแหน่ง (เห็นเป้า 🎯 บนรูป) แล้วใช้ปุ่มลูกศรเลื่อนตำแหน่ง, W/S ปรับความสูงปาก, A/D ปรับความกว้าง (กด Shift ค้าง = ทีละ 2) ตำแหน่งจะถูกจำไว้ให้อัตโนมัติ<br><br>เมื่อข้าวกล้องพูด ปากจะอ้าปิดตามระดับเสียงจริง + ตัวขยับพริ้วตามจังหวะคำพูด</details>
 </div>
@@ -168,46 +167,53 @@ function animLoop(){
 }
 requestAnimationFrame(animLoop);
 
-/* ------- Video avatar (public/videos/) — add more characters by dropping
-   {id}-idle.webp, {id}-listening.webp, {id}-talking.webp into public/videos/ ------- */
+/* ------- Video avatar — random variant per mode -------
+   Files live in public/videos/ as {name}.webp (animated WebP).
+   Add/remove entries freely. One variant is picked at random each switch.
+     idle      -> idle1.webp idle2.webp idle3.webp ...
+     listening -> listen1.webp listen2.webp listen3.webp ...
+     talking   -> talk1.webp talk2.webp talk3.webp ...
+   av-* files stay as guaranteed fallbacks. */
 const AV_MODES=['idle','listening','talking'];
-const CHARACTERS=[
-  {id:'av',name:'ข้าวกล้อง'},
-  {id:'cat',name:'แมวน้อย'},
-];
+const AV_POOLS={
+  idle:['idle1','idle2','idle3','idle4','av-idle'],
+  listening:['listen1','listen2','listen3','listen4','av-listening'],
+  talking:['talk1','talk2','talk3','talk4','av-talking'],
+};
 const VOICES=[
   ['Puck','น่ารัก'],['Aoede','กลาง'],['Leda','สุภาพ'],['Kore','สดใส'],['Zephyr','เบาๆ']
 ];
 let avMode='idle';
-let charId=loadSetting('zhaok-char','av');
+let pickCache={};
 let voiceId=loadSetting('zhaok-voice','Puck');
 function loadSetting(k,d){try{return localStorage.getItem(k)||d}catch(e){return d}}
 function saveSetting(k,v){try{localStorage.setItem(k,v)}catch(e){}}
-function fileURL(id,mode){return `videos/${id}-${mode}.webp`}
 const avV=document.getElementById('avatarVideo');
 const avI=document.getElementById('avatar');
 avV.addEventListener('error',()=>{avV.style.display='none';avI.style.display='block'});
+function pickVariant(mode){
+  const pool=AV_POOLS[mode]||[];
+  if(!pool.length)return 'av-'+mode;
+  let cand=pool[Math.floor(Math.random()*pool.length)];
+  if(pool.length>1&&cand===pickCache[mode]) cand=pool[(pool.indexOf(cand)+1)%pool.length];
+  pickCache[mode]=cand;
+  return cand;
+}
 function setAvatarMode(mode){
   if(!AV_MODES.includes(mode))mode='idle';
   avMode=mode;
   if(!avV)return;
-  if(avV.dataset.src===charId+':'+mode)return;
-  avV.dataset.src=charId+':'+mode;
-  avV.src=fileURL(charId,mode);
+  const name=pickVariant(mode);
+  if(avV.dataset.src===name)return;
+  avV.dataset.src=name;
+  avV.src=`videos/${name}.webp`;
   avV.style.display='block';avI.style.display='none';
 }
-/* Populate voice + character pickers */
+/* Populate voice picker */
 (function(){
-  const vs=$('voiceSel'),cs=$('charSel');
+  const vs=$('voiceSel');
   if(vs){VOICES.forEach(v=>{const o=document.createElement('option');o.value=v[0];o.textContent=v[0]+' ('+v[1]+')';vs.appendChild(o)});vs.value=voiceId}
-  if(cs){CHARACTERS.forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;cs.appendChild(o)});cs.value=charId}
 })();
-function changeChar(id){
-  if(!CHARACTERS.some(c=>c.id===id))return;
-  charId=id;saveSetting('zhaok-char',id);
-  avV.dataset.src='';avV.src=fileURL(id,avMode);avV.style.display='block';avI.style.display='none';
-  add('🪄 สลับตัวละครเป็น "'+(CHARACTERS.find(c=>c.id===id)||{}).name+'"','ai');
-}
 function changeVoice(v){
   if(!VOICES.some(x=>x[0]===v))return;
   voiceId=v;saveSetting('zhaok-voice',v);
@@ -219,6 +225,7 @@ function changeVoice(v){
   disconnect();
   setTimeout(toggleConnect,600);
 }
+
 function greet(){
   if(!ws||ws.readyState!==WebSocket.OPEN)return;
   sendWs({realtimeInput:{text:'สวัสดีค่ะ กล่าวทักทายพี่สั้นๆ หน่อยนะคะ'}});
