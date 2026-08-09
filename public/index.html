@@ -5,7 +5,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="น้องข้าวกล้อง AI">
-<link rel="apple-touch-icon" href="avatar.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#fff5f8">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>น้องข้าวกล้อง AI — Live Avatar V3 (Gemini Live)</title>
 <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -759,7 +762,7 @@ summary {
 <body>
 <div class="app">
 <header>
-  <div class="brand"><img class="logo" src="avatar.png"><div><h1>น้องข้าวกล้อง AI Assistant</h1><p>V3 Live Avatar • Gemini Live • พูดคุยเสียงต่อเสียงฟรี</p></div></div>
+  <div class="brand"><img class="logo" src="logo.webp"><div><h1>น้องข้าวกล้อง AI Assistant</h1><p>V3 Live Avatar • Gemini Live • พูดคุยเสียงต่อเสียงฟรี</p></div></div>
   <div class="status" id="status"><span class="dot"></span>ยังไม่เชื่อมต่อ</div>
 </header>
 <main>
@@ -903,7 +906,15 @@ function showEmotion(em,seconds){
   return name;
 }
 function handleEmotionTool(fc){
-  const em=String(fc.args&&fc.args.emotion||'neutral').toLowerCase();
+  const rawEm=String(fc.args&&fc.args.emotion||'neutral').toLowerCase();
+  const EMOTION_ALIAS={
+    happy:'happy',smile:'happy',smiling:'happy',joy:'happy',yay:'happy',
+    excited:'excited',laughing:'excited',laugh:'excited',cheerful:'excited',
+    surprised:'surprised',shocked:'surprised',amazed:'surprised',astonished:'surprised',scared:'surprised',oops:'surprised',wow:'surprised',
+    angry:'angry',angry_pout:'angry',pout:'angry',sulk:'angry',annoyed:'angry',
+    embarrassed:'embarrassed',shy:'embarrassed',cute:'embarrassed',clumsy:'embarrassed',blush:'embarrassed',
+  };
+  const em=EMOTION_ALIAS[rawEm]||rawEm;
   let dur=Number(fc.args&&fc.args.duration);
   if(!(dur>0))dur=10;            // default: hold 10 seconds
   dur=Math.min(25,Math.max(3,dur));
@@ -911,6 +922,22 @@ function handleEmotionTool(fc){
   const label=EMOTION_NAMES[em]||em;
   sendToolResult(fc.id,[{emotion:em}],used?('shown '+em):('clip for '+em+' not ready yet, check EMOTION_VIDEOS'));
   if(used){bubble('<b>ข้าวกล้อง '+label+' แล้วค่ะ 🎭</b>');}
+}
+/* Auto-trigger emotion from spoken words (backup if model doesn't call set_emotion). */
+const AUTO_EMOTION_KEYWORDS=[
+  ['surprised',['ตกใจ','อึ้ง','ทึ่ง','ว้าว','ตกตะลึง','ประหลาดใจ','เฮ้ย','โอ๊ะ','อะไรเนี่ย']],
+  ['happy',['ยิ้ม','สนุก','ดีใจ','แฮปปี้','มีความสุข','น่ารัก']],
+  ['excited',['หัวเราะ','ฮ่า','ตื่นเต้น','วู้','สุดยอด']],
+  ['angry',['งอน','โกรธ','ไม่พอใจ','อีโว้ย','หงุดหงิด']],
+  ['embarrassed',['เขิน','อาย','บ้ายบาง','แย่จัง','โอย']],
+];
+function autoEmotion(text){
+  if(!text)return;
+  for(const [em,kws] of AUTO_EMOTION_KEYWORDS){
+    for(const kw of kws){
+      if(kw&&text.includes(kw)){showEmotion(em,6);return;}
+    }
+  }
 }
 const VOICES=[
   ['Puck','น่ารัก'],['Aoede','กลาง'],['Leda','สุภาพ'],['Kore','สดใส'],['Zephyr','เบาๆ']
@@ -1104,6 +1131,7 @@ $('avatarWrap').classList.remove('listening');$('avatarWrap').classList.add('tal
 if(sc.inputTranscription&&sc.inputTranscription.text){
     if(memUser)memUser+=' ';memUser+=sc.inputTranscription.text;
     $('wave').textContent='🎧 กำลังฟังค่ะ...';
+    autoEmotion(memUser);
   }
   if(sc.outputTranscription&&sc.outputTranscription.text){
     if(memModel)memModel+=' ';memModel+=sc.outputTranscription.text;

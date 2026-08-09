@@ -1,0 +1,30 @@
+{
+  "name": "น้องข้าวกล้อง AI",
+  "short_name": "ข้าวกล้อง",
+  "description": "น้องข้าวกล้อง AI — Live Avatar V3 ด้วย Gemini Live พูดคุยเสียงต่อเสียงฟรี",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#eae4f8",
+  "theme_color": "#fff5f8",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
