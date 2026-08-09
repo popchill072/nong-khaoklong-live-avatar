@@ -808,6 +808,20 @@ let streamer=null,player=null;
 let memUser='', memModel='';   // streaming transcript accumulation (voice)
 const $=x=>document.getElementById(x);
 
+/* --- iOS audio-session hint: keep speaker output on while mic is open --- */
+function initAudioSession(){
+  try{
+    if(navigator.audioSession&&navigator.audioSession.type){
+      navigator.audioSession.type='play-and-record'; // iOS 17+: play+record together -> speaker stays
+      return;
+    }
+    if(navigator.webkitAudioSession&&navigator.webkitAudioSession.setCategory){
+      navigator.webkitAudioSession.setCategory('playandrecord','defaultToSpeaker');
+    }
+  }catch(e){console.warn('audioSession',e)}
+}
+initAudioSession();
+
 /* --- Audio level (RMS) tracking for body bob --- */
 let curLevel=0, targetLevel=0;   // 0..1
 /* --- Persistent conversation memory (local-first + cloud KV backup) --- */
@@ -1237,12 +1251,13 @@ function toBase64(buf){const b=new Uint8Array(buf);let s='';for(let i=0;i<b.leng
 class Player{
   async init(){
     this.ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000});
-    if(this.ctx.state==='suspended')await this.ctx.resume();
+    if(this.ctx.state==='suspended'){try{await this.ctx.resume()}catch(e){}}
     await this.ctx.audioWorklet.addModule('/audio-processors/playback.worklet.js');
     this.node=new AudioWorkletNode(this.ctx,'pcm-processor');
     this.node.connect(this.ctx.destination);
   }
-  play(b64){const bin=atob(b64);const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);const i16=new Int16Array(bytes.buffer);const f32=new Float32Array(i16.length);let sum=0;for(let i=0;i<i16.length;i++){const v=i16[i]/32768;f32[i]=v;sum+=v*v}const rms=Math.sqrt(sum/Math.max(1,i16.length));setLevelLv(rms);this.node.port.postMessage(f32)}
+  async ensure(){if(this.ctx&&this.ctx.state==='suspended'){try{await this.ctx.resume()}catch(e){}}}
+  play(b64){this.ensure();const bin=atob(b64);const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);const i16=new Int16Array(bytes.buffer);const f32=new Float32Array(i16.length);let sum=0;for(let i=0;i<i16.length;i++){const v=i16[i]/32768;f32[i]=v;sum+=v*v}const rms=Math.sqrt(sum/Math.max(1,i16.length));setLevelLv(rms);this.node.port.postMessage(f32)}
   interrupt(){this.node&&this.node.port.postMessage('interrupt')}
   destroy(){this.node&&this.ctx&&this.ctx.close();this.node=this.ctx=null}
 }
