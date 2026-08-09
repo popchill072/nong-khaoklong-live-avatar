@@ -875,6 +875,43 @@ const AV_POOLS={
   listening:['listen2','listen3','av-listening'],
   talking:['talk2','talk3','talk4','av-talking'],
 };
+/* Emotion clips — videos/emotion-<name>.webp (fill arrays as clips arrive) */
+const EMOTION_VIDEOS={
+  neutral:['av-idle'],
+  happy:['emotion-smiling','emotion-happy'],
+  sad:[],
+  excited:['emotion-excited'],
+  surprised:['emotion-surprised'],
+  thinking:[],
+  love:[],
+  angry:['emotion-angry'],
+  sleepy:[],
+  embarrassed:['emotion-embarrassed'],
+};
+const EMOTION_NAMES={neutral:'ธรรมดา',happy:'น่ารักยิ้ม',sad:'ใจเบา',excited:'ตื่นเต้น',surprised:'ตกใจ',thinking:'คิดหนัก',love:'คิด',angry:'งอน',sleepy:'งัวเงีย',embarrassed:'เขิน'};
+let emotionTimer=null;
+function showEmotion(em,seconds){
+  const list=EMOTION_VIDEOS[em]||[];
+  if(!list.length)return false;               // clip not ready yet -> keep current video
+  const prev=avMode||'idle';
+  const name=list[Math.floor(Math.random()*list.length)];
+  if(!avV)return null;
+  avV.dataset.src=name;avV.src=`videos/${name}.webp`;
+  avV.style.display='block';avI.style.display='none';
+  clearTimeout(emotionTimer);
+  emotionTimer=setTimeout(()=>{if(avV&&document.contains(avV))setAvatarMode(prev)},(seconds||10)*1000);
+  return name;
+}
+function handleEmotionTool(fc){
+  const em=String(fc.args&&fc.args.emotion||'neutral').toLowerCase();
+  let dur=Number(fc.args&&fc.args.duration);
+  if(!(dur>0))dur=10;            // default: hold 10 seconds
+  dur=Math.min(25,Math.max(3,dur));
+  const used=showEmotion(em,dur);
+  const label=EMOTION_NAMES[em]||em;
+  sendToolResult(fc.id,[{emotion:em}],used?('shown '+em):('clip for '+em+' not ready yet, check EMOTION_VIDEOS'));
+  if(used){bubble('<b>ข้าวกล้อง '+label+' แล้วค่ะ 🎭</b>');}
+}
 const VOICES=[
   ['Puck','น่ารัก'],['Aoede','กลาง'],['Leda','สุภาพ'],['Kore','สดใส'],['Zephyr','เบาๆ']
 ];
@@ -899,6 +936,7 @@ function setAvatarMode(mode){
   if(!AV_MODES.includes(mode))mode='idle';
   avMode=mode;
   if(!avV)return;
+  if(emotionTimer){clearTimeout(emotionTimer);emotionTimer=null;}
   const name=pickVariant(mode);
   if(avV.dataset.src===name)return;
   avV.dataset.src=name;
@@ -1000,6 +1038,17 @@ function setupSession(){
             },
             required:["prompt"]
           }
+        },{
+          name:"set_emotion",
+          description:"Set the avatar's facial expression/emotion by switching to a matching emotion video. Call this when the user requests an emotion or when the conversation mood calls for one. Emotions: neutral, happy, sad, excited, surprised, thinking, love, angry, sleepy, embarrassed. Each plays its own short looping clip; the avatar returns to talk/listen video automatically as the conversation continues.",
+          parameters:{
+            type:"OBJECT",
+            properties:{
+              emotion:{type:"STRING",description:"One of: neutral, happy, sad, excited, surprised, thinking, love, angry, sleepy, embarrassed"},
+              duration:{type:"NUMBER",description:"Optional seconds to hold the emotion (default 10)."}
+            },
+            required:["emotion"]
+          }
         }]
       }]
     }
@@ -1025,6 +1074,7 @@ async function onWsMessage(ev){
   if(data.toolCall&&data.toolCall.functionCalls){
     for(const fc of data.toolCall.functionCalls){
       if(fc.name==='generate_image')handleImageTool(fc);
+      else if(fc.name==='set_emotion')handleEmotionTool(fc);
     }
     return;
   }
