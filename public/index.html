@@ -1181,6 +1181,28 @@ function setupSession(){
           description:"Retrieve all saved notes/todos/reminders of the owner. Call this when the user asks what notes exist, what I saved, what's on the to-do list, หรือ อยากดึงบันทึกกลับมา.",
           parameters:{type:"OBJECT",properties:{},required:[]}
         },{
+          name:"add_event",
+          description:"Add an appointment/event to the calendar. Call this when the user asks to schedule/record an appointment or something at a date/time, e.g. นัด(หมอ/ประชุม/ขึ้นเครื่อง),\nกำหนดการ, นัดพบ, จัดตาราง. Saves with date (required) and optional time.",
+          parameters:{
+            type:"OBJECT",
+            properties:{
+              title:{type:"STRING",description:"Short Thai title of the appointment, e.g. ประชุมทีม"},
+              date:{type:"STRING",description:"Date as YYYY-MM-DD (Thai Buddhist year must be converted to Gregorian). E.g. 2026-08-11."},
+              time:{type:"STRING",description:"Optional HH:MM start time in 24h, e.g. 14:00. Default 09:00."}
+            },
+            required:["title","date"]
+          }
+        },{
+          name:"get_events",
+          description:"Retrieve calendar appointments. Call this when the user asks what's on the calendar/schedule/appointments, or what events are today/พรุ่งนี้/สัปดาห์นี้/วันที่ X, or asks to see the schedule.",
+          parameters:{
+            type:"OBJECT",
+            properties:{
+              date:{type:"STRING",description:"Optional YYYY-MM-DD to filter to a single date (Gregorian)."}
+            },
+            required:[]
+          }
+        },{
           name:"set_emotion",
           description:"Set the avatar's facial expression/emotion by switching to a matching emotion video. Call this when the user requests an emotion or when the conversation mood calls for one. Emotions: neutral, happy, sad, excited, surprised, thinking, love, angry, sleepy, embarrassed, bye (wave goodbye when the user says farewell like ไปแล้วนะ/เดี๋ยวไปก่อน/บ๊ายบาย). Each plays its own short looping clip; the avatar returns to talk/listen video automatically as the conversation continues.",
           parameters:{
@@ -1221,6 +1243,8 @@ async function onWsMessage(ev){
       else if(fc.name==='get_now')handleNowTool(fc);
       else if(fc.name==='save_note')handleSaveNoteTool(fc);
       else if(fc.name==='get_notes')handleGetNotesTool(fc);
+      else if(fc.name==='add_event')handleAddEventTool(fc);
+      else if(fc.name==='get_events')handleGetEventsTool(fc);
     }
     return;
   }
@@ -1372,6 +1396,32 @@ async function handleGetNotesTool(fc){
     const notes=(d.notes||[]).slice(-20);
     const text=notes.length?notes.map((n,i)=>`${i+1}. ${n.text}`).join('\n'):'(ยังไม่มีบันทึก)';
     sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{count:notes.length,notes_text:text}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleAddEventTool(fc){
+  const title=String(fc.args&&fc.args.title||'').trim();
+  const date=String(fc.args&&fc.args.date||'').trim();
+  const time=String(fc.args&&fc.args.time||'').trim();
+  if(!title||!/^\d{4}-\d{2}-\d{2}$/.test(date)){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:'missing title or invalid date, need date as YYYY-MM-DD'}}]}});return}
+  try{
+    const r=await fetch('/api/calendar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,date,time})});
+    const d=await r.json();
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{ok:!!d.ok,date,time}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleGetEventsTool(fc){
+  const date=String(fc.args&&fc.args.date||'').trim();
+  try{
+    const q=date?('?date='+encodeURIComponent(date)):'';
+    const r=await fetch('/api/calendar'+q);
+    const d=await r.json();
+    const evs=(d.events||[]).map(e=>`- ${e.at}${e.time?' '+e.time:''}\n  ${e.title}`).join('\n');
+    const text=evs||' (ไม่มีนัดในปฏิทิน)';
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{count:(d.events||[]).length,events_text:text}}]}});
   }catch(e){
     sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
   }

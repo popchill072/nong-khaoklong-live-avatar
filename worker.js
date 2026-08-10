@@ -35,6 +35,11 @@ export default {
       return handleNotes(request, env);
     }
 
+    // Calendar (appointments): GET /api/calendar  POST /api/calendar  DELETE /api/calendar
+    if (url.pathname === "/api/calendar") {
+      return handleCalendar(request, env);
+    }
+
     // Serve static assets from the bundled ./public directory.
     const asset = await env.ASSETS.fetch(request);
     return asset;
@@ -275,6 +280,55 @@ function strip(s) {
     .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#x27;/g, "'")
     .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .trim();
+}
+
+/* Calendar (appointments) stored in KV.
+   GET    /api/calendar           -> {events:[{id,title,at,allDay}] , sorted by time}
+   GET    /api/calendar?date=YYYY-MM-DD  -> events on that date
+   POST   /api/calendar {title, date, time?}  -> add (date required, YYYY-MM-DD; time HH:MM optional)
+   POST   /api/calendar {delete:id}       -> remove an event by id
+   Cap 100 events. */
+async function handleCalendar(request, env) {
+  const key = "calendar:me";
+  try {
+    const raw = await env.MEMORY.get(key);
+    let events = raw ? JSON.parse(raw).filter(Boolean) : [];
+
+    if (request.method === "GET") {
+      const date = (new URL(request.url).searchParams.get("date") || "").trim();
+      if (date) events = events.filter(e => e.at === date);
+      events = events.sort((a, b) => (a.at + a.time).localeCompare(b.at + b.time)).slice(0, 100);
+      return json({ events }, 200);
+    }
+
+    if (request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      if (body.delete) {
+        events = events.filter(e => e.id !== String(body.delete));
+        await env.MEMORY.put(key, JSON.stringify(events));
+        return json({ ok: true, deleted: true, events: events.slice(0, 100) }, 200);
+      }
+      const title = String(body.title || "").trim();
+      const date = String(body.date || "").trim();
+      if (!title) return json({ error: "Missing title" }, 400);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ error: "Missing/invalid date (YYYY-MM-DD)" }, 400);
+      const time = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(body.time || "").trim()) ? String(body.time).trim() : "09:00";
+      const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      events.push({ id, title, at: date, time, createdAt: new Date().toISOString() });
+      if (events.length > 100) events = events.sort((a, b) => (a.at + a.time).localeCompare(b.at + b.time)).slice(0, 100);
+      await env.MEMORY.put(key, JSON.stringify(events));
+      return json({ ok: true, id, events: events.sort((a, b) => (a.at + a.time).localeCompare(b.at + b.time)).slice(0, 100) }, 200);
+    }
+
+    if (request.method === "DELETE") {
+      await env.MEMORY.delete(key);
+      return json({ ok: true, cleared: true, events: [] }, 200);
+    }
+
+    return json({ error: "Method not allowed" }, 405);
+  } catch (e) {
+    return json({ error: String(e?.message || e) }, 500);
+  }
 }
 
 /* Current time/date in Bangkok. Theme: the model has a stale built-in clock,
