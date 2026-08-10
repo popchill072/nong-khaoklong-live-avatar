@@ -20,6 +20,21 @@ export default {
       return generateImage(request, env);
     }
 
+    // Web search (proxy, no Gemini grounding quota): GET /api/search?q=...
+    if (url.pathname === "/api/search") {
+      return handleSearch(request, url, env);
+    }
+
+    // Current time (Asia/Bangkok): GET /api/now
+    if (url.pathname === "/api/now") {
+      return handleNow();
+    }
+
+    // Notes/todo memory (same KV as chat): GET /api/notes  POST /api/notes
+    if (url.pathname === "/api/notes") {
+      return handleNotes(request, env);
+    }
+
     // Serve static assets from the bundled ./public directory.
     const asset = await env.ASSETS.fetch(request);
     return asset;
@@ -144,6 +159,175 @@ async function mintToken(env) {
       throw new Error(data?.error?.message || `HTTP ${r.status}`);
     }
     return json({ token: data.name, expiresAt: expireTime }, 200);
+  } catch (e) {
+    return json({ error: String(e?.message || e) }, 500);
+  }
+}
+
+/* Web search proxy — free & keyless by default (Wikipedia TH+EN summaries).
+   Data quality: factual/encyclopaedic, up-to-date enough for common questions.
+   Need fresher/live-web results? Set SEARCH_API_KEY + SEARCH_ENGINE=bing|tavily. */
+async function handleSearch(request, url, env) {
+  const q = (url.searchParams.get("q") || "").trim();
+  const max = Math.min(4, Math.max(1, parseInt(url.searchParams.get("max") || "3", 10) || 3));
+  if (!q) return json({ error: "Missing query" }, 400);
+  if (q.length > 300) return json({ error: "Query too long" }, 400);
+
+  try {
+    let results = [];
+    if (env.SEARCH_API_KEY && env.SEARCH_ENGINE === "bing") {
+      results = await searchBing(q, max, env.SEARCH_API_KEY);
+    } else if (env.SEARCH_API_KEY && env.SEARCH_ENGINE === "tavily") {
+      results = await searchTavily(q, max, env.SEARCH_API_KEY);
+    } else {
+      results = await searchWikipedia(q, max);
+    }
+    if (!results.length) return json({ error: "No results" }, 404);
+    return json({ query: q, engine: engineLabel(env), results }, 200);
+  } catch (e) {
+    return json({ error: String(e?.message || e) }, 500);
+  }
+}
+
+function engineLabel(env) {
+  if (env.SEARCH_API_KEY && env.SEARCH_ENGINE === "bing") return "bing";
+  if (env.SEARCH_API_KEY && env.SEARCH_ENGINE === "tavily") return "tavily";
+  return "wikipedia";
+}
+
+const WIKI_UA = "nong-khaoklong-ai/1.0 (wangbua AI assistant; contact: popchill072@users.noreply.github.com)";
+
+/* Search TH then EN Wikipedia; include article intro as the snippet. */
+async function searchWikipedia(q, max) {
+  const langs = ["th", "en"];
+  const out = [];
+  for (const lang of langs) {
+    if (out.length >= max) break;
+    const r = await fetch(
+      `https://${lang}.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(q)}&limit=${max}&redirects=resolve&format=json`,
+      { headers: { "User-Agent": WIKI_UA } }
+    );
+    if (!r.ok) continue;
+    const d = await r.json();
+    const titles = d[1] || [], urls = d[3] || [];
+    for (let i = 0; i < titles.length && out.length < max; i++) {
+      const t = titles[i], u = urls[i] || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(t)}`;
+      const snippet = await wikiExtract(lang, t);
+      if (!snippet) continue;
+      out.push({ title: `${t} (${lang}${lang === "th" ? " วิกิพีเดีย" : " Wikipedia"})`, url: u, snippet });
+    }
+  }
+  return out;
+}
+
+async function wikiExtract(lang, title) {
+  try {
+    const r = await fetch(
+      `https://${lang}.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&redirects=1&format=json&titles=${encodeURIComponent(title)}`,
+      { headers: { "User-Agent": WIKI_UA } }
+    );
+    if (!r.ok) return "";
+    const d = await r.json();
+    const pages = d?.query?.pages || {};
+    const pg = Object.values(pages)[0];
+    const ex = pg?.extract || "";
+    return sanitizeWikitext(ex).slice(0, 600);
+  } catch (e) {
+    return "";
+  }
+}
+
+function sanitizeWikitext(s) {
+  return String(s || "")
+    .replace(/\(listen\)|\[[0-9]+\]|\((?:listen|help[^)]*)\)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function searchTavily(q, max, key) {
+  const r = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: key, query: q, max_results: max, search_depth: "basic" }),
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error("Tavily " + (d?.error || `HTTP ${r.status}`));
+  return (d.results || []).slice(0, max).map(x => ({
+    title: x.title, url: x.url, snippet: String(x.content || "").slice(0, 600),
+  }));
+}
+
+async function searchBing(q, max, key) {
+  const r = await fetch(
+    `https://api.bing.microsoft.com/v7.0/search?q=${encodeURIComponent(q)}&count=${max}`,
+    { headers: { "Ocp-Apim-Subscription-Key": key } }
+  );
+  const d = await r.json();
+  if (!r.ok) throw new Error("Bing " + (d?.error?.message || `HTTP ${r.status}`));
+  return (d.webPages?.value || []).slice(0, max).map(x => ({
+    title: x.name, url: x.url, snippet: String(x.snippet || "").slice(0, 600),
+  }));
+}
+
+function strip(s) {
+  return String(s || "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#x27;/g, "'")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .trim();
+}
+
+/* Current time/date in Bangkok. Theme: the model has a stale built-in clock,
+   so call this whenever the user asks "today/what time/พรุ่งนี้/กี่โมง". */
+function handleNow() {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("th-TH-u-ca-buddhist", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+    hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok",
+  }).format(now);
+  const iso = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Bangkok",
+  }).format(now).replace(",", "");
+  const weekday = new Intl.DateTimeFormat("th-TH", { weekday: "long", timeZone: "Asia/Bangkok" }).format(now);
+  return json({
+    greeting: `วัน${weekday} ${fmt}`,
+    weekday,
+    dateThai: fmt,
+    iso,
+    weekdayThai: "วัน" + weekday,
+    today: true,
+  }, 200);
+}
+
+/* Notes & todos (per-owner, same KV namespace as chat memory).
+   GET  /api/notes          -> {notes:[{text,created}]}
+   POST /api/notes {text}  -> append (cap 50)
+   POST /api/notes {clear} -> wipe all */
+async function handleNotes(request, env) {
+  const key = "notes:me";
+  try {
+    if (request.method === "GET") {
+      const raw = await env.MEMORY.get(key);
+      return json({ notes: raw ? JSON.parse(raw).filter(Boolean) : [] }, 200);
+    }
+    if (request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const raw = await env.MEMORY.get(key);
+      let notes = raw ? JSON.parse(raw) : [];
+      if (body.clear) {
+        await env.MEMORY.delete(key);
+        return json({ notes: [], cleared: true }, 200);
+      }
+      const text = String(body.text || "").trim();
+      if (!text) return json({ error: "Missing text" }, 400);
+      if (text.length > 2000) return json({ error: "Note too long" }, 400);
+      notes.push({ text, created: new Date().toISOString() });
+      if (notes.length > 50) notes = notes.slice(-50);
+      await env.MEMORY.put(key, JSON.stringify(notes));
+      return json({ ok: true, notes }, 200);
+    }
+    return json({ error: "Method not allowed" }, 405);
   } catch (e) {
     return json({ error: String(e?.message || e) }, 500);
   }

@@ -1153,6 +1153,34 @@ function setupSession(){
             required:["prompt"]
           }
         },{
+          name:"web_search",
+          description:"Search the web (Wikipedia TH+EN summaries) for up-to-date facts, news, prices, stats or details beyond my knowledge. Call this automatically whenever the user asks a question that needs current or specific factual information.",
+          parameters:{
+            type:"OBJECT",
+            properties:{
+              query:{type:"STRING",description:"The search query, concise, and in Thai if the user asked in Thai."}
+            },
+            required:["query"]
+          }
+        },{
+          name:"get_now",
+          description:"Get the current date/time in Bangkok (Thai Buddhist calendar). Call this whenever the user asks what day/date/time it is now, or mentions พรุ่งนี้/เมื่อวาน/วันนี้ and the answer depends on today's date.",
+          parameters:{type:"OBJECT",properties:{},required:[]}
+        },{
+          name:"save_note",
+          description:"Save a short note, reminder, todo or fact for the owner so it is remembered across devices and future conversations. Call this when the user asks you to remember something, write it down, set a reminder, or jot a task/idea for later.",
+          parameters:{
+            type:"OBJECT",
+            properties:{
+              text:{type:"STRING",description:"The note/reminder/todo content, concise, in Thai."}
+            },
+            required:["text"]
+          }
+        },{
+          name:"get_notes",
+          description:"Retrieve all saved notes/todos/reminders of the owner. Call this when the user asks what notes exist, what I saved, what's on the to-do list, หรือ อยากดึงบันทึกกลับมา.",
+          parameters:{type:"OBJECT",properties:{},required:[]}
+        },{
           name:"set_emotion",
           description:"Set the avatar's facial expression/emotion by switching to a matching emotion video. Call this when the user requests an emotion or when the conversation mood calls for one. Emotions: neutral, happy, sad, excited, surprised, thinking, love, angry, sleepy, embarrassed, bye (wave goodbye when the user says farewell like ไปแล้วนะ/เดี๋ยวไปก่อน/บ๊ายบาย). Each plays its own short looping clip; the avatar returns to talk/listen video automatically as the conversation continues.",
           parameters:{
@@ -1189,6 +1217,10 @@ async function onWsMessage(ev){
     for(const fc of data.toolCall.functionCalls){
       if(fc.name==='generate_image')handleImageTool(fc);
       else if(fc.name==='set_emotion')handleEmotionTool(fc);
+      else if(fc.name==='web_search')handleSearchTool(fc);
+      else if(fc.name==='get_now')handleNowTool(fc);
+      else if(fc.name==='save_note')handleSaveNoteTool(fc);
+      else if(fc.name==='get_notes')handleGetNotesTool(fc);
     }
     return;
   }
@@ -1293,6 +1325,56 @@ function showPromptFallback(prompt,aspect,reason){
   wrap.appendChild(h);wrap.appendChild(box);wrap.appendChild(btn);
   w.appendChild(wrap);
   w.scrollTop=w.scrollHeight;
+}
+async function handleSearchTool(fc){
+  const query=String(fc.args&&fc.args.query||'').trim();
+  if(!query){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{result:"Missing query. Ask the user to rephrase."}}]}});return}
+  $('wave').textContent='🔍 กำลังค้นข้อมูล...';
+  try{
+    const r=await fetch('/api/search?q='+encodeURIComponent(query)+'&max=3');
+    const d=await r.json();
+    if(r.ok&&Array.isArray(d.results)&&d.results.length){
+      const text=d.results.map(x=>`- ${x.title}\n  ${x.snippet}\n  แหล่ง: ${x.url}`).join('\n\n');
+      const note=`ค้นสำเร็จ (${d.engine}) ได้ทั้งหมด ${d.results.length} ผล:\n${text}\n\nสรุปให้ผู้ใช้เป็นภาษาไทย สั้น ตรงประเด็น และสามารถอ้างแหล่งได้`;
+      sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{result:note}}]}});
+    }else{
+      const why=(d&&d.error)||'no results';
+      sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{result:`search failed: ${why}. Tell the user politely that you could not find online info for this, and answer from your own knowledge.`}}]}});
+    }
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{result:'search error: '+String(e&&e.message||e)+'. Answer from your own knowledge.'}}]}});
+  }
+}
+async function handleNowTool(fc){
+  try{
+    const r=await fetch('/api/now');
+    const d=await r.json();
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:d}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleSaveNoteTool(fc){
+  const text=String(fc.args&&fc.args.text||'').trim();
+  if(!text){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:'missing text'}}]}});return}
+  try{
+    const r=await fetch('/api/notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    const d=await r.json();
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{count:(d.notes||[]).length}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleGetNotesTool(fc){
+  try{
+    const r=await fetch('/api/notes');
+    const d=await r.json();
+    const notes=(d.notes||[]).slice(-20);
+    const text=notes.length?notes.map((n,i)=>`${i+1}. ${n.text}`).join('\n'):'(ยังไม่มีบันทึก)';
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{count:notes.length,notes_text:text}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
 }
 function sendToolResult(id,args){
   sendWs({toolResponse:{functionResponses:[{id,response:{result:"ok",args}}]}});
