@@ -213,6 +213,15 @@ main {
   object-position: center 20%;
   border-radius: 28px 28px 0 0;
   filter: drop-shadow(0 20px 35px rgba(80, 53, 70, 0.16));
+  opacity: 0;
+  transition: opacity 0.35s ease;
+  -webkit-backface-visibility: hidden;
+  will-change: opacity;
+  pointer-events: none;
+}
+
+.avatarVideo.on {
+  opacity: 1;
 }
 
 .avatarWrap.listening {
@@ -301,6 +310,15 @@ main {
   font-size: 14px;
   line-height: 1.6;
   color: var(--ink);
+  opacity: 1;
+  transition: opacity 0.5s ease, transform 0.5s ease;
+  transform: translateY(0);
+}
+
+.bubble.fade {
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
 }
 
 .level {
@@ -772,6 +790,7 @@ summary {
   <div class="avatarWrap" id="avatarWrap">
 <img class="avatar" id="avatar" src="avatar.png">
     <img class="avatar avatarVideo" id="avatarVideo" alt="" style="display:none">
+    <img class="avatar avatarVideo" id="avatarVideoB" alt="" style="display:none">
   </div>
   <div class="wave" id="wave">พร้อมคุยค่ะ 😊</div>
 </section>
@@ -890,19 +909,23 @@ const EMOTION_VIDEOS={
   angry:['emotion-angry'],
   sleepy:[],
   embarrassed:['emotion-embarrassed'],
+  bye:['Bye','bye2','bye3'],
 };
-const EMOTION_NAMES={neutral:'ธรรมดา',happy:'น่ารักยิ้ม',sad:'ใจเบา',excited:'ตื่นเต้น',surprised:'ตกใจ',thinking:'คิดหนัก',love:'คิด',angry:'งอน',sleepy:'งัวเงีย',embarrassed:'เขิน'};
+const EMOTION_NAMES={neutral:'ธรรมดา',happy:'น่ารักยิ้ม',sad:'ใจเบา',excited:'ตื่นเต้น',surprised:'ตกใจ',thinking:'คิดหนัก',love:'คิด',angry:'งอน',sleepy:'งัวเงีย',embarrassed:'เขิน',bye:'โบกมือบาย'};
 let emotionTimer=null;
+let emotionState=null;   // while set -> emotion clip must finish before avatar switches back
 function showEmotion(em,seconds){
   const list=EMOTION_VIDEOS[em]||[];
   if(!list.length)return false;               // clip not ready yet -> keep current video
   const prev=avMode||'idle';
   const name=list[Math.floor(Math.random()*list.length)];
-  if(!avV)return null;
-  avV.dataset.src=name;avV.src=`videos/${name}.webp`;
-  avV.style.display='block';avI.style.display='none';
+  showAvatar(name);
+  emotionState=prev;
   clearTimeout(emotionTimer);
-  emotionTimer=setTimeout(()=>{if(avV&&document.contains(avV))setAvatarMode(prev)},(seconds||10)*1000);
+  emotionTimer=setTimeout(()=>{
+    emotionState=null;
+    if(document.contains(avV)&&avV)setAvatarMode(avMode||'idle');
+  },(seconds||10)*1000);
   return name;
 }
 function handleEmotionTool(fc){
@@ -930,6 +953,7 @@ const AUTO_EMOTION_KEYWORDS=[
   ['excited',['หัวเราะ','ฮ่า','ตื่นเต้น','วู้','สุดยอด']],
   ['angry',['งอน','โกรธ','ไม่พอใจ','อีโว้ย','หงุดหงิด']],
   ['embarrassed',['เขิน','อาย','บ้ายบาง','แย่จัง','โอย']],
+  ['bye',['ไปแล้วนะ','ไปก่อน','เดี๋ยวไป','ต้องมีธุระ','ต้องไปแล้ว','ลาก่อน','บ๊ายบาย','บายๆ','บาย ๆ','ไว้คุยกันใหม่','แล้วเจอกัน','ไปนอนก่อน','ขอตัวก่อน','ขอตัวลา','เดินทางปลอดภัย']],
 ];
 function autoEmotion(text){
   if(!text)return;
@@ -948,9 +972,62 @@ let voiceId=loadSetting('zhaok-voice','Leda');
 saveSetting('zhaok-voice','Leda');
 function loadSetting(k,d){try{return localStorage.getItem(k)||d}catch(e){return d}}
 function saveSetting(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+/* Dual-buffer crossfade: two stacked layers (avatarVideo + avatarVideoB).
+   New clip loads hidden first, then fades in over 0.35s while the old one
+   fades out — no jump, no black flash on mode switches. */
 const avV=document.getElementById('avatarVideo');
+const avVb=document.getElementById('avatarVideoB');
 const avI=document.getElementById('avatar');
-avV.addEventListener('error',()=>{avV.style.display='none';avI.style.display='block'});
+const AV_LAYER_FADE=350;
+const avCache={};          // preloaded Image() per clip -> instant swaps
+let avLayer=0;             // 0: avatarVideo top, 1: avatarVideoB top
+let avCurrentName='';
+let avInterrupt=0;
+
+/* Preload every pickable clip into the browser/device memory up-front so a
+   mode switch is 0 ms waiting (no refetch mid-conversation). */
+function preloadAvatarVideos(){
+  const names=new Set(['av-idle','av-listening','av-talking']);
+  Object.values(AV_POOLS).forEach(p=>p.forEach(n=>names.add(n)));
+  Object.values(EMOTION_VIDEOS).forEach(p=>p.forEach(n=>names.add(n)));
+  names.forEach(n=>{
+    const im=new Image();
+    im.decoding='async';
+    im.onload=()=>{};
+    im.src=`videos/${n}.webp`;
+    avCache[n]=im;
+  });
+}
+preloadAvatarVideos();
+
+function avElement(i){return i===0?avV:avVb}
+function onAvError(el){
+  if(avInterrupt!==el._tag)return;
+  el.classList.remove('on');
+  avI.style.display='block';
+}
+function showAvatar(name){
+  if(!avV||!avVb)return;
+  if(avCurrentName===name)return;             // already showing this clip
+  const next=1-avLayer;                        // the hidden layer becomes next
+  const nextEl=avElement(next);
+  const curEl=avElement(avLayer);
+  const tag=++avInterrupt;
+  nextEl._tag=tag;
+  nextEl.onload=()=>{
+    if(tag!==avInterrupt)return;               // superseded, ignore
+    nextEl.style.display='block';             // make visible before fading
+    nextEl.classList.add('on');               // fade new in 0.35s
+    curEl.classList.remove('on');             // fade old out 0.35s
+    avI.style.display='none';
+    setTimeout(()=>{if(tag===avInterrupt&&curEl.classList.contains('on')===false)curEl.style.display='none'},AV_LAYER_FADE+120);
+  };
+  nextEl.onerror=()=>onAvError(nextEl);
+  nextEl.dataset.src=name;
+  nextEl.src=`videos/${name}.webp`;
+  avCurrentName=name;
+  avLayer=next;
+}
 function pickVariant(mode){
   const pool=AV_POOLS[mode]||[];
   if(!pool.length)return 'av-'+mode;
@@ -962,13 +1039,9 @@ function pickVariant(mode){
 function setAvatarMode(mode){
   if(!AV_MODES.includes(mode))mode='idle';
   avMode=mode;
-  if(!avV)return;
-  if(emotionTimer){clearTimeout(emotionTimer);emotionTimer=null;}
-  const name=pickVariant(mode);
-  if(avV.dataset.src===name)return;
-  avV.dataset.src=name;
-  avV.src=`videos/${name}.webp`;
-  avV.style.display='block';avI.style.display='none';
+  if(emotionState){return;}   // emotion clip is showing -> switch back later
+  clearTimeout(emotionTimer);
+  showAvatar(pickVariant(mode));
 }
 /* Populate voice picker */
 (function(){
@@ -994,8 +1067,22 @@ function greet(){
 setAvatarMode('idle');
 function add(t,w){let d=document.createElement('div');d.className='msg '+w;d.textContent=t;$('messages').appendChild(d);$('messages').scrollTop=$('messages').scrollHeight}
 function status(t,on=false){$('status').innerHTML='<span class="dot"></span>'+t;$('status').classList.toggle('on',on)}
-function bubble(html){const b=$('bubble');b.innerHTML=html;b.style.display='block'}
-function bubbleHide(){$('bubble').style.display='none'}
+const BUBBLE_FADE_MS=9000;
+let bubbleTimer=null;
+function bubble(html){
+  const b=$('bubble');
+  b.innerHTML=html;
+  b.classList.remove('fade');
+  b.style.display='block';
+  void b.offsetWidth;                     // restart CSS transition
+  clearTimeout(bubbleTimer);
+  bubbleTimer=setTimeout(()=>b.classList.add('fade'),BUBBLE_FADE_MS);
+}
+function bubbleHide(){
+  clearTimeout(bubbleTimer);
+  $('bubble').classList.add('fade');
+  setTimeout(()=>{$('bubble').style.display='none'},600);
+}
 function sendWs(o){if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(o))}
 
 /* ------- Token + WebSocket ------- */
@@ -1067,11 +1154,11 @@ function setupSession(){
           }
         },{
           name:"set_emotion",
-          description:"Set the avatar's facial expression/emotion by switching to a matching emotion video. Call this when the user requests an emotion or when the conversation mood calls for one. Emotions: neutral, happy, sad, excited, surprised, thinking, love, angry, sleepy, embarrassed. Each plays its own short looping clip; the avatar returns to talk/listen video automatically as the conversation continues.",
+          description:"Set the avatar's facial expression/emotion by switching to a matching emotion video. Call this when the user requests an emotion or when the conversation mood calls for one. Emotions: neutral, happy, sad, excited, surprised, thinking, love, angry, sleepy, embarrassed, bye (wave goodbye when the user says farewell like ไปแล้วนะ/เดี๋ยวไปก่อน/บ๊ายบาย). Each plays its own short looping clip; the avatar returns to talk/listen video automatically as the conversation continues.",
           parameters:{
             type:"OBJECT",
             properties:{
-              emotion:{type:"STRING",description:"One of: neutral, happy, sad, excited, surprised, thinking, love, angry, sleepy, embarrassed"},
+              emotion:{type:"STRING",description:"One of: neutral, happy, sad, excited, surprised, thinking, love, angry, sleepy, embarrassed, bye"},
               duration:{type:"NUMBER",description:"Optional seconds to hold the emotion (default 10)."}
             },
             required:["emotion"]

@@ -13,3 +13,6 @@ npm-debug.log*
 # OS
 Thumbs.db
 .DS_Store
+
+# Raw source clips (convert to .webp before committing; never deploy raw video)
+raw_clips/
