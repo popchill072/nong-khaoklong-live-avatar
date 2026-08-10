@@ -1,22 +1,114 @@
-# น้องข้าวกล้อง AI Assistant V3 — Live Avatar
+# น้องข้าวกล้อง AI Assistant V3 — Live Avatar + LINE Official Account
 
-V3 เป็นเวอร์ชันต่อจาก Prototype/V2:
-- GPT Realtime สำหรับคุยเสียงต่อเสียง
+ผู้ช่วย AI ตัวเป็นภาพเคลื่อนไหว "น้องข้าวกล้อง" ที่คุยกับเจ้าของได้ทั้งบนเว็บ (เสียง/ข้อความ Live) และผ่าน LINE Official Account (ข้อความ)
+
+V3 ต่อยอดจาก Prototype/V2:
+- Gemini Live สำหรับคุยเสียงต่อเสียงแบบเรียลไทม์ (bidiGenerateContent)
 - ภาษาไทย + persona "น้องข้าวกล้อง"
-- รองรับการพูดแทรกและ semantic VAD
-- Avatar image + voice-reactive animation
-- มีปุ่ม mute microphone และพิมพ์ข้อความได้
-- API key อยู่ฝั่ง server
+- รองรับการพูดแทรก (interrupt) และ semantic VAD
+- Avatar ภาพ + crossfade video อารมณ์ (happy/sad/excited/surprised/thinking/love/angry/sleepy/embarrassed/bye)
+- PWA: ติดตั้งเป็นแอปที่หน้า Home ได้ (โลโก้ + icons + manifest)
+- API key อยู่ฝั่ง server (browser ได้แค่ ephemeral token)
+- Tools: web_search, get_now, save_note / get_notes, add_event / get_events, generate_image, set_emotion
+- Memory ระหว่างเครื่องผ่าน KV (Cloudflare) — จำได้ทุก device
+- LINE Official Account bot (webhook + signature verify + AI + memory แยกผู้ใช้)
 
-## วิธีใช้
+## เทคโนโลยี
+- Cloudflare Worker (ES modules) + KV namespace `MEMORY`
+- Gemini Live API (WebSocket) บนเว็บ, Gemini generateContent บน LINE
+- LINE Messaging API (Reply API)
+- Static: `public/` ถูกเสิร์ฟโดย Cloudflare Assets
+
+---
+
+## วิธีติดตั้ง (บน Cloudflare)
+
 1. ติดตั้ง Node.js 20+
 2. `npm install`
-3. คัดลอก `.env.example` เป็น `.env`
-4. ใส่ `OPENAI_API_KEY=...`
-5. `npm start`
-6. เปิด `http://localhost:3000`
-7. กด "เริ่มคุย" และอนุญาตไมโครโฟน
+3. คัดลอก `.env.example` เป็น `.env` (ใช้ใน local dev ผ่าน `wrangler dev`; ตัวจริงตั้งเป็น secret ใน Cloudflare)
+4. สร้าง Worker บน Cloudflare และตั้งตัวแปร (Settings → Variables and Secrets):
+
+| Variable | ค่า |
+|---|---|
+| `GEMINI_API_KEY` | API key จาก https://aistudio.google.com (ฟรี) |
+| `GEMINI_MODEL` *(optional)* | `gemini-3.1-flash-live-preview` (ค่าเริ่มต้นฝั่งเว็บ) |
+| `GEMINI_VOICE` *(optional)* | เช่น `Leda` / `Aoede` / `Kore` |
+
+5. สร้าง KV namespace และผูกเป็น `MEMORY` (ดู `wrangler.toml`)
+6. Deploy: `npx wrangler deploy`
+7. เปิด `https://<worker>.workers.dev`
+
+### ทดสอบเว็บ
+- เปิด URL → กด "เริ่มคุย" → อนุญาตไมโครโฟน → พูดกับข้าวกล้อง
+
+---
+
+## การตั้งค่า LINE Official Account
+
+LINE bot จะทำงานเมื่อตั้งตัวแปร LINE ให้ครบเท่านั้น (ถ้าไม่ได้ตั้ง LINE_ENABLED=true โมดูลจะปิดอยู่ เว็บยังใช้ได้ปกติ)
+
+### ขั้นตอน
+
+1. เปิด [LINE Developers Console](https://developers.line.biz/) → สร้าง Provider → สร้าง Channel แบบ ** Messaging API**
+2. ในหน้า Messaging API ตั้งค่า:
+   - **Webhook URL**: `https://<worker>.workers.dev/api/line/webhook`
+   - เปิด **Use webhook** (on)
+   - (optional) เปิด Auto-reply / Greeting off เพื่อไม่ให้ขัดกับ bot ตัวเอง
+3. ตั้งค่า secret/token ใน Cloudflare Worker (Settings → Variables and Secrets):
+
+| Variable | ค่า | จำเป็น? |
+|---|---|---|
+| `LINE_ENABLED` | `true` | ✅ (ปิด-เปิดโมดูล LINE ทั้งหมด) |
+| `LINE_CHANNEL_SECRET` | Channel secret จาก LINE Dev Console | ✅ |
+| `LINE_CHANNEL_ACCESS_TOKEN` | Channel access token (กดปุ่ม **Issue** ใน Messaging API) | ✅ |
+| `LINE_MODEL` *(optional)* | โมเดลข้อความที่ใช้ตอบ LINE เช่น `gemini-3.5-flash` (ค่าเริ่มต้น) | — |
+| `LINE_BASE_URL` *(optional)* | URL ของ worker ถ้าต่างจาก default (ใช้ตอนส่งรูปจาก generate_image) | — |
+
+> ใช้คำสั่งได้ถ้าไม่สะดวกกด dashboard:
+> ```
+> npx wrangler secret put LINE_ENABLED       (พิมพ์ true)
+> npx wrangler secret put LINE_CHANNEL_SECRET
+> npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
+> ```
+
+4. Deploy อีกครั้ง: `npx wrangler deploy`
+5. เปิด LINE → เพิ่ม LINE Official Account (Channel) เป็นเพื่อน → พิมพ์ข้อความ
+
+### ทดสอบ LINE
+- ส่งข้อความ "สวัสดี" → ควรได้เสียงของข้าวกล้องตอบ
+- "ตอนนี้กี่โมง" → ตอบเวลาจริง (เรียก tool get_now)
+- "จดไว้ว่าพรุ่งนี้ซื้อของ" → บันทึก notes
+- "พรุ่งนี้มีนัดอะไร" → เช็ค calendar
+- "/health" ไม่มี — แต่เปิด `https://<worker>.workers.dev/api/line/health` ในบราวเซอร์เพื่อดูสถานะว่า LINE โมดูลเปิด/ปิด มี token+secret ครบไหม
+
+### ถ้าหน้า LINE ตอบช้าหรือ error
+- เปิด `/api/line/health` ดูว่า `enabled / hasToken / hasSecret = true`
+- Gemini free tier มี quota (~20 req/min/model) — ระบบมี fallback โมเดลอัตโนมัติ (`gemini-3.1-flash-lite` → ... → `gemini-2.0-flash-lite`) แต่ถ้าใช้หนักบนเว็บ+LINE พร้อมกันอาจยังโดนจำกัด
+- ตรวจ log: `npx wrangler tail nong-khaoklong-live-avatar`
+
+---
+
+## API endpoints (ภายใน Worker)
+
+| Path | Method | ใช้ |
+|---|---|---|
+| `/gemini-token` | POST | ออก ephemeral token ให้เว็บ (Live) |
+| `/api/history?key=me` | GET/POST | บันทึก/อ่านบทสนทนา (KV `h:{key}`) |
+| `/api/now` | GET | วัน/เวลาไทย (พุทธศักราช) |
+| `/api/search?q=...` | GET | ค้นข้อมูล (Wikipedia TH+EN, ไม่ต้อง key) |
+| `/api/notes` | GET/POST | บันทึก/อ่านโน้ต |
+| `/api/calendar` | GET/POST/DELETE | นัดหมาย |
+| `/api/image` | POST | สร้างภาพ (Nano Banana) |
+| `/api/line/webhook` | POST | webhook LINE (ตรวจ signature + ตอบ) |
+| `/api/line/health` | GET | ดูสถานะโมดูล LINE |
+| `/api/line/media/{id}` | GET | เสิร์ฟรูปที่ generate ให้ LINE |
+
+## Feature flags (ชุดที่เปิด/ปิดได้)
+- `LINE_ENABLED` — ปิด-เปิดโมดูล LINE ทั้งหมด (false = เว็บทำงานปกติ, LINE webhook ตอบ 404)
+- `LINE_MODEL` — เปลี่ยนโมเดลข้อความฝั่ง LINE
+- `SEARCH_ENGINE` + `SEARCH_API_KEY` *(optional)* — เปลี่ยนเครื่องมือค้นจาก Wikipedia เป็น `bing` / `tavily` (มี free tier: Bing 1,000/เดือน, Tavily 1,000 credits/เดือน ไม่ต้องบัตร)
+
+---
 
 ## หมายเหตุเรื่อง Lip-sync
-ตัวนี้เป็น "Live Avatar scaffold" ที่ทำให้ภาพตอบสนองตามสถานะการฟัง/พูดและเสียงของ GPT ได้ แต่ริมฝีปากของภาพถ่ายยังไม่ขยับเป็น viseme จริง
-การทำ lip-sync จริงต้องต่อ avatar renderer/2D-3D rig ที่รับ audio/viseme events เพิ่มอีกชั้นหนึ่ง
+ตัวนี้เป็น "Live Avatar scaffold" ที่ทำให้ภาพตอบสนองตามสถานะการฟัง/พูดและเสียงของ Gemini ได้ แต่ริมฝีปากของภาพถ่ายยังไม่ขยับเป็น viseme จริง การทำ lip-sync จริงต้องต่อ avatar renderer/2D-3D rig ที่รับ audio/viseme events เพิ่มอีกชั้นหนึ่ง

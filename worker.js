@@ -1,8 +1,26 @@
 // Cloudflare Worker — serves static assets + mints ephemeral Gemini token.
 // Static files live in ./public (wrangler.toml -> assets.directory).
 
+import {
+  handleLineWebhook,
+  lineHealth,
+  serveLineMedia,
+} from "./line.js";
+
+// Handles to the original worker services. The LINE module calls these
+// directly (no copied logic) for memory/history, search, time, notes,
+// calendar and image generation.
+const lineServices = {
+  handleHistory,
+  handleSearch,
+  handleNow,
+  handleNotes,
+  handleCalendar,
+  generateImage,
+};
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (request.method === "POST" && url.pathname === "/gemini-token") {
@@ -38,6 +56,17 @@ export default {
     // Calendar (appointments): GET /api/calendar  POST /api/calendar  DELETE /api/calendar
     if (url.pathname === "/api/calendar") {
       return handleCalendar(request, env);
+    }
+
+    // LINE Official Account module (opt-in via env flags)
+    if (url.pathname === "/api/line/webhook") {
+      return handleLineWebhook(request, env, lineServices, ctx);
+    }
+    if (url.pathname === "/api/line/health") {
+      return lineHealth(env);
+    }
+    if (url.pathname.startsWith("/api/line/media/")) {
+      return serveLineMedia(url.pathname, env);
     }
 
     // Serve static assets from the bundled ./public directory.

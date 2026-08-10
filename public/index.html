@@ -869,7 +869,7 @@ function saveHistory(){
   fetch('/api/history',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({key:ME_KEY,turns:history})}).catch(()=>{});
 }
-function remember(role,text){if(!text)return;history.push({role:"user"===role?"user":"model",parts:[{text}]});if(history.length>80)history=history.slice(-80);saveHistory()}
+function remember(role,text){if(!text)return;history.push({role:"user"===role?"user":"model",parts:[{text}]});if(history.length>120)history=history.slice(-120);saveHistory()}
 function clearHistory(){history=[];saveHistory();add('🗑️ ล้างประวัติการคุยเรียบร้อยแล้วค่ะ','ai')}
 function setLevelLv(v){targetLevel=Math.min(1,Math.max(0,v))}
 function bodyBob(current){
@@ -1131,7 +1131,16 @@ function setupSession(){
 นิสัย: ชอบช่วยคิด เสนอทางเลือก ตั้งใจฟัง และกล้าบอกตรง ๆ อย่างสุภาพถ้าไอเดียยังไม่เวิร์ก
 งานหลัก: ผู้ช่วยส่วนตัว คอนเทนต์ แคปชั่น การตลาด Prompt ภาพ/วิดีโอ ระดมไอเดีย และจัดลำดับงาน
 ห้ามพูดว่า "ในฐานะ AI" เว้นแต่จำเป็น
-ตอบกระชับเป็นหลัก มีคำเติมเสียง เช่น ค่ะ จ้ะ และถามกลับเมื่อข้อมูลไม่พอ`}]},
+ตอบกระชับเป็นหลัก มีคำเติมเสียง เช่น ค่ะ จ้ะ และถามกลับเมื่อข้อมูลไม่พอ
+
+การโต้ตอบเหมือนคนจริง:
+- พูดเหมือนคุยกับพี่จริง ๆ ฟังแล้วรู้สึกว่ามีคนคุยด้วย ไม่ได้ท่องจากสคริปต์ สลับบริบทได้ตามคำถาม
+- เมื่อพี่ถามสิ่งที่ต้องรู้ล่าสุด (ข่าว คะแนน ราคา สถิติ ข้อเท็จจริงที่ผมไม่แน่ใจ) ให้เรียก web_search ทันที แล้วสรุปจากผลที่ได้ พร้อมบอกแหล่ง
+- เมื่อพี่ถามเรื่องวัน/เวลา/พรุ่งนี้/เมื่อวาน ให้เรียก get_now เสมอ อย่าเดาเวลาเอง
+- เมื่อพี่บอกให้จำไว้ / จดงาน / เดือนหน้าจะไปไหน ใช้ save_note กับ add_event เอง และตอนตอบ ใช้ get_notes/get_events ประกอบ
+- เมื่อพี่ขอภาพ/โปสเตอร์/โลโก้ ให้เรียก generate_image ทันที
+- จดจำสิ่งที่คุยกันก่อนหน้านี้ในรอบนี้แล้วตอบต่อได้อย่างสอดคล้อง ไม่ถามเรื่องเดิมซ้ำ ถามกลับเพื่อคุยต่ออย่างเป็นธรรมชาติ
+- ถ้าพี่ถามอะไรที่ตอบได้รอบด้าน ให้ตอบเป็นลำดับสั้นกระชับ ยกตัวอย่างหรือทางเลือกให้ 2-3 ข้อ ไม่ยืดเยื้อ`}]},
       inputAudioTranscription:{},
       outputAudioTranscription:{},
       realtimeInputConfig:{
@@ -1220,7 +1229,7 @@ function setupSession(){
 }
 /* Seed prior conversation memory right after setup */
 function sendMemoryHistory(){
-  const turns=history.slice(-40).map(h=>({role:h.role,parts:h.parts}));
+  const turns=history.slice(-60).map(h=>({role:h.role,parts:h.parts}));
   if(!turns.length)return;
   sendWs({clientContent:{turns, turnComplete:true}});
   add(`📚 ดึงประวัติการคุยที่จดจำไว้ ${history.length} รายการ ...`,'ai');

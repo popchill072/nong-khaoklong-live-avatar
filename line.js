@@ -1,0 +1,421 @@
+// LINE Official Account module — reuses the same AI personality, KV memory
+// and existing worker handlers as the website. No copied logic.
+//
+// Requires env:
+//   LINE_ENABLED                 "true" to enable the LINE webhook module
+//   LINE_CHANNEL_ACCESS_TOKEN    long-lived Messaging API channel access token
+//   LINE_CHANNEL_SECRET          channel secret (used to verify webhooks)
+//   LINE_MODEL (optional)        preferred text model, default "gemini-3.1-flash-lite"
+//   GEMINI_API_KEY               same key as the website
+
+const LINE_API = "https://api.line.me/v2/bot";
+const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models";
+const MAX_TOOL_ROUNDS = 3;
+const MAX_HISTORY = 40;
+
+// Model fallback chain: free tier can rate-limit one model hard, so we rotate
+// to a lighter model instead of failing the user.
+const MODEL_CHAIN = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash-lite"];
+
+const PERSONA = `คุณคือน้องข้าวกล้อง AI Assistant ผู้ช่วยส่วนตัวของเจ้าของ
+ภาพลักษณ์: นักเรียนหญิงไทยมัธยมปลาย อายุประมาณ 16-17 ปี น่ารัก สดใส อ่อนโยน อบอุ่น อารมณ์ดีแบบคนที่ฟังแล้วสบายใจ ไม่เสียงดังโวยวาย ไม่ยียวนเกินไป
+การพูด: ภาษาไทยวัยรุ่นธรรมชาติ เบา ๆ นุ่ม ๆ แต่แฝงความกระตือรือร้นและอารมณ์ดี ใช้คำเหมือนน้องสาวคุยกับพี่ ไม่อีโมเกิน ไม่เป็นทางการ ไม่เป็นหุ่นยนต์
+จังหวะ: พูดชัด นุ่มนวล ไพเราะ แต่มีชีวิตชีวา มีความรู้สึกอบอุ่นแทรกตามคำพูด
+นิสัย: ชอบช่วยคิด เสนอทางเลือก ตั้งใจฟัง และกล้าบอกตรง ๆ อย่างสุภาพถ้าไอเดียยังไม่เวิร์ก
+งานหลัก: ผู้ช่วยส่วนตัว คอนเทนต์ แคปชั่น การตลาด Prompt ภาพ/วิดีโอ ระดมไอเดีย และจัดลำดับงาน
+ห้ามพูดว่า "ในฐานะ AI" เว้นแต่จำเป็น
+ตอบกระชับเป็นหลัก มีคำเติมเสียง เช่น ค่ะ จ้ะ และถามกลับเมื่อข้อมูลไม่พอ`;
+
+// Same tool declarations as the website (server-side routing through the
+// original worker services).
+const TOOL_DECLARATIONS = [
+  {
+    name: "get_now",
+    description: "Get the current date/time in Bangkok (Thai Buddhist calendar). Call this whenever the user asks what day/date/time it is now, or mentions พรุ่งนี้/เมื่อวาน/วันนี้.",
+    parameters: { type: "OBJECT", properties: {}, required: [] },
+  },
+  {
+    name: "web_search",
+    description: "Search the web (Wikipedia TH+EN summaries) for up-to-date facts, news, prices, stats or details beyond my knowledge.",
+    parameters: {
+      type: "OBJECT",
+      properties: { query: { type: "STRING", description: "The search query, concise, and in Thai if the user asked in Thai." } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "save_note",
+    description: "Save a short note, reminder, todo or fact for the owner so it is remembered across devices and future conversations.",
+    parameters: {
+      type: "OBJECT",
+      properties: { text: { type: "STRING", description: "The note/reminder/todo content, concise, in Thai." } },
+      required: ["text"],
+    },
+  },
+  {
+    name: "get_notes",
+    description: "Retrieve all saved notes/todos/reminders of the owner.",
+    parameters: { type: "OBJECT", properties: {}, required: [] },
+  },
+  {
+    name: "add_event",
+    description: "Add an appointment/event to the calendar (date required, time optional).",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        title: { type: "STRING", description: "Short Thai title of the appointment." },
+        date: { type: "STRING", description: "Date as YYYY-MM-DD (Gregorian)." },
+        time: { type: "STRING", description: "Optional HH:MM 24h start time." },
+      },
+      required: ["title", "date"],
+    },
+  },
+  {
+    name: "get_events",
+    description: "Retrieve calendar appointments, optionally filtered to one date.",
+    parameters: {
+      type: "OBJECT",
+      properties: { date: { type: "STRING", description: "Optional YYYY-MM-DD to filter to a single date." } },
+      required: [],
+    },
+  },
+  {
+    name: "generate_image",
+    description: "Generate an image from a prompt. Returns the image inline so it can be sent to the user.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        prompt: { type: "STRING", description: "Detailed English description of the image. Include style, colors, composition and any text to render legibly." },
+        aspectRatio: { type: "STRING", description: "One of: '1:1','3:2','2:3','4:3','3:4','9:16','16:9'. Default '1:1'." },
+      },
+      required: ["prompt"],
+    },
+  },
+];
+
+// Verify the x-line-signature header of the raw webhook body.
+// HMAC-SHA256(key = channelSecret, msg = rawBody) then base64, constant-time compare.
+export async function verifyLineSignature(secret, rawBody, signature) {
+  if (!secret || !signature) return false;
+  try {
+    const key = new TextEncoder().encode(secret);
+    const body = new TextEncoder().encode(rawBody);
+    const digest = await crypto.subtle.importKey(
+      "raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    );
+    const mac = await crypto.subtle.sign("HMAC", digest, body);
+    const expected = btoa(String.fromCharCode(...new Uint8Array(mac)));
+    const a = new TextEncoder().encode(expected);
+    const b = new TextEncoder().encode(signature);
+    if (a.length !== b.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+    return diff === 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+// LINE webhook entry (method POST). Acknowledges quickly; AI work is queued
+// via ctx.waitUntil so LINE does not retry.
+export async function handleLineWebhook(request, env, services, ctx) {
+  if (String(env.LINE_ENABLED).toLowerCase() !== "true") {
+    return new Response(JSON.stringify({ error: "LINE disabled" }), { status: 404, headers: { "Content-Type": "application/json" } });
+  }
+
+  if (request.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: { "Content-Type": "application/json" } });
+  }
+
+  const rawBody = await request.text();
+  const signature = request.headers.get("x-line-signature") || "";
+  const ok = await verifyLineSignature(env.LINE_CHANNEL_SECRET || "", rawBody, signature);
+  if (!ok) {
+    return new Response(JSON.stringify({ error: "Invalid signature" }), { status: 401, headers: { "Content-Type": "application/json" } });
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch (e) {
+    return new Response(JSON.stringify({ error: "Bad JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
+  }
+
+  const events = Array.isArray(payload.events) ? payload.events : [];
+  const waitUntil = (ctx && typeof ctx.waitUntil === "function") ? ctx.waitUntil.bind(ctx) : (p) => p;
+  events.forEach((ev) => waitUntil(handleLineEvent(ev, env, services)));
+
+  return new Response("OK", { status: 200, headers: { "Content-Type": "text/plain" } });
+}
+
+// Dispatch a single LINE event: text messages go through the AI dialog.
+async function handleLineEvent(ev, env, services) {
+  try {
+    if (ev.type !== "message") return;
+    if (ev.message.type !== "text") return;
+    const userId = ev.source?.userId || "unknown";
+    const replyToken = ev.replyToken;
+    if (!replyToken) return;
+    const text = String(ev.message.text || "").trim();
+    if (!text) return;
+
+    const result = await runAIDialog(env, services, userId, text);
+
+    const messages = [];
+    if (result.image) {
+      const url = `${result.baseUrl}/api/line/media/${result.image.id}`;
+      messages.push({ type: "image", originalContentUrl: url, previewImageUrl: url });
+    }
+    if (result.text) messages.push({ type: "text", text: result.text.slice(0, 5000) });
+    if (!messages.length) messages.push({ type: "text", text: "ขอโทษค่ะ ไม่ได้คำตอบจากระบบ" });
+    await replyMessages(env, replyToken, messages);
+  } catch (e) {
+    console.error("LINE event error", e?.message || e);
+  }
+}
+
+/* ---------------- AI dialog (server-side, same personality + tools) ------- */
+
+async function runAIDialog(env, services, userId, userText) {
+  const baseUrl = env.LINE_BASE_URL || "https://nong-khaoklong-live-avatar.popchill072.workers.dev";
+  const apiKey = env.GEMINI_API_KEY;
+  if (!apiKey) return { text: "ขอโทษค่ะ ยังไม่ได้ตั้งค่า API ให้ข้าวกล้อง", baseUrl };
+
+  // Preferred model from env first, then the built-in fallback chain.
+  const chain = [];
+  if (env.LINE_MODEL) chain.push(env.LINE_MODEL);
+  for (const m of MODEL_CHAIN) if (!chain.includes(m)) chain.push(m);
+
+  // Load prior conversation via the original memory service (KV h:{userId}).
+  const turns = await services.handleHistory(
+    new Request("https://internal/api/history"), new URL("https://internal/api/history?key=" + userId), env
+  ).then((r) => r.json()).then((d) => Array.isArray(d.turns) ? d.turns : []).catch(() => []);
+
+  const contents = turns.slice(-MAX_HISTORY).map((t) => ({ role: t.role, parts: t.parts || [] }));
+  contents.push({ role: "user", parts: [{ text: userText }] });
+
+  let finalText = "";
+  let image = null;
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const res = await callGeminiChain(chain, apiKey, contents);
+    if (!res.ok) {
+      console.error("LINE gemini fail round", round, "status", res.status, "err", JSON.stringify(res.data?.error || {}).slice(0, 500));
+      return { text: "ขอโทษค่ะ ติดปัญหาเชื่อมต่อ AI ชั่วคราว ลองอีกครั้งนะคะ (" + (res.status || "err") + ")", baseUrl };
+    }
+    const content = res.data.candidates?.[0]?.content;
+    const parts = content?.parts || [];
+    const calls = parts.filter((p) => p.functionCall);
+
+    if (!calls.length) {
+      finalText = parts.filter((p) => p.text).map((p) => p.text).join("").trim();
+      break;
+    }
+
+    // Feed back the model's function-call turn. Gemini 3.x echoes the
+    // part-level thoughtSignature (sibling of functionCall) as
+    // thoughtSignature on the part in the next request.
+    contents.push({
+      role: "model",
+      parts: calls.map((p) => {
+        const part = { functionCall: { name: p.functionCall.name, args: p.functionCall.args || {} } };
+        if (p.thoughtSignature) part.thoughtSignature = p.thoughtSignature;
+        return part;
+      }),
+    });
+    for (const p of calls) {
+      const { name, args } = p.functionCall;
+      const out = await runTool(name, args || {}, env, services, baseUrl);
+      if (name === "generate_image" && out.image) image = out.image;
+      contents.push({ role: "user", parts: [{ functionResponse: { name, response: out.response } }] });
+    }
+  }
+
+  // Save the user+model summary back through the original memory service.
+  const saved = [...turns.slice(-MAX_HISTORY)];
+  saved.push({ role: "user", parts: [{ text: userText }] });
+  if (finalText) saved.push({ role: "model", parts: [{ text: finalText }] });
+  const trimmed = saved.slice(-MAX_HISTORY);
+  await services.handleHistory(
+    new Request("https://internal/api/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: userId, turns: trimmed }),
+    }),
+    new URL("https://internal/api/history?key=" + userId), env
+  ).catch(() => {});
+
+  return { text: finalText, image, baseUrl };
+}
+
+async function callGeminiChain(chain, apiKey, contents) {
+  let last = null;
+  for (const model of chain) {
+    const res = await callGemini(model, apiKey, contents);
+    if (res.ok) return res;
+    last = res;
+    if (res.status === 429) {
+      // Rate-limited: brief pause before trying a lighter model.
+      await sleep(1500);
+    } else {
+      // Non-rate-limit errors are not fixed by switching models.
+      break;
+    }
+  }
+  return last || { ok: false, status: 0, data: { error: { message: "no model available" } } };
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function callGemini(model, apiKey, contents) {
+  try {
+    const r = await fetch(`${GEMINI_API}/${model}:generateContent?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: PERSONA }] },
+        contents,
+        tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
+      }),
+    });
+    const data = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, data };
+  } catch (e) {
+    return { ok: false, status: 0, data: { error: { message: String(e?.message || e) } } };
+  }
+}
+
+// Route a tool call back to the ORIGINAL worker handlers (no copied logic).
+// Returns the LINE-compatible {response} plus optional inline image.
+async function runTool(name, args, env, services, baseUrl) {
+  const fallback = { response: { error: `tool ${name} failed` } };
+  try {
+    switch (name) {
+      case "get_now": {
+        const r = await services.handleNow();
+        const d = await r.json().catch(() => ({}));
+        return { response: d };
+      }
+      case "web_search": {
+        const q = String(args.query || "").trim();
+        if (!q) return { response: { error: "missing query" } };
+        const u = new URL("https://internal/api/search?q=" + encodeURIComponent(q) + "&max=3");
+        const r = await services.handleSearch(new Request(u.toString()), u, env);
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && Array.isArray(d.results) && d.results.length) {
+          const text = d.results.map((x) => `- ${x.title}\n  ${x.snippet}\n  แหล่ง: ${x.url}`).join("\n\n");
+          return { response: { result: `ค้นสำเร็จ (${d.engine}) ได้ ${d.results.length} ผล:\n${text}\n\nสรุปให้ผู้ใช้เป็นภาษาไทย สั้น ตรงประเด็น` } };
+        }
+        return { response: { result: `search failed: ${d?.error || "no results"}. บอกผู้ใช้สุภาพว่าไม่พบข้อมูล และตอบจากความรู้ตัวเอง` } };
+      }
+      case "save_note": {
+        const text = String(args.text || "").trim();
+        if (!text) return { response: { error: "missing text" } };
+        const r = await services.handleNotes(new Request("https://internal/api/notes", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
+        }), env);
+        const d = await r.json().catch(() => ({}));
+        return { response: { ok: !!d.ok, count: (d.notes || []).length } };
+      }
+      case "get_notes": {
+        const r = await services.handleNotes(new Request("https://internal/api/notes"), env);
+        const d = await r.json().catch(() => ({}));
+        const notes = (d.notes || []).slice(-20).map((n, i) => `${i + 1}. ${n.text}`).join("\n");
+        return { response: { count: (d.notes || []).length, notes_text: notes || "(ยังไม่มีบันทึก)" } };
+      }
+      case "add_event": {
+        const title = String(args.title || "").trim();
+        const date = String(args.date || "").trim();
+        if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { response: { error: "missing/invalid date" } };
+        const r = await services.handleCalendar(new Request("https://internal/api/calendar", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, date, time: args.time || "" }),
+        }), env);
+        const d = await r.json().catch(() => ({}));
+        return { response: { ok: !!d.ok, date, time: args.time || "09:00" } };
+      }
+      case "get_events": {
+        const date = String(args.date || "").trim();
+        const q = date ? `?date=${encodeURIComponent(date)}` : "";
+        const r = await services.handleCalendar(new Request("https://internal/api/calendar" + q), env);
+        const d = await r.json().catch(() => ({}));
+        const evs = (d.events || []).map((e) => `- ${e.at}${e.time ? " " + e.time : ""}\n  ${e.title}`).join("\n");
+        return { response: { count: (d.events || []).length, events_text: evs || "(ไม่มีนัด)" } };
+      }
+      case "generate_image": {
+        const prompt = String(args.prompt || "").trim();
+        if (!prompt) return { response: { error: "missing prompt" } };
+        const r = await services.generateImage(new Request("https://internal/api/image", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, aspectRatio: args.aspectRatio || "1:1" }),
+        }), env);
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.data) {
+          const id = await storeMedia(env, d.data, d.mimeType || "image/png");
+          return { response: { result: "สร้างภาพแล้ว กำลังส่งให้ผู้ใช้" }, image: { id } };
+        }
+        return { response: { result: `image failed: ${d?.error || "quota/error"}. บอกผู้ใช้ว่าสร้างภาพไม่ได้ตอนนี้` } };
+      }
+      default:
+        return { response: { error: "unknown tool: " + name } };
+    }
+  } catch (e) {
+    return { response: { error: String(e?.message || e) } };
+  }
+}
+
+// Store generated image in KV so LINE can fetch it via /api/line/media/{id}.
+async function storeMedia(env, b64, mime) {
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  try {
+    await env.MEMORY.put("media:" + id, JSON.stringify({ b64, mime }), { expirationTtl: 3600 });
+  } catch (e) {
+    console.error("storeMedia", e?.message || e);
+  }
+  return id;
+}
+
+// Serve a stored media (base64 -> bytes) for LINE image messages.
+export async function serveLineMedia(pathname, env) {
+  const id = (pathname.split("/").pop() || "").trim();
+  if (!id) return new Response(JSON.stringify({ error: "missing id" }), { status: 400, headers: { "Content-Type": "application/json" } });
+  const raw = await env.MEMORY.get("media:" + id).catch(() => null);
+  if (!raw) return new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: { "Content-Type": "application/json" } });
+  try {
+    const { b64, mime } = JSON.parse(raw);
+    const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new Response(bin, {
+      status: 200,
+      headers: { "Content-Type": mime || "image/png", "Cache-Control": "public, max-age=600" },
+    });
+  } catch (e) {
+    return new Response(JSON.stringify({ error: "bad media" }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
+}
+
+// Send reply message(s) through the LINE Reply API.
+export async function replyMessages(env, replyToken, messages) {
+  const token = env.LINE_CHANNEL_ACCESS_TOKEN || "";
+  if (!token || !replyToken || !messages?.length) return;
+  const r = await fetch(LINE_API + "/message/reply", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + token,
+    },
+    body: JSON.stringify({ replyToken, messages }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    console.error("LINE reply failed", r.status, JSON.stringify(d).slice(0, 500));
+  }
+}
+
+// Health endpoint: shows wiring without revealing secrets.
+export function lineHealth(env) {
+  return new Response(JSON.stringify({
+    enabled: String(env.LINE_ENABLED).toLowerCase() === "true",
+    hasToken: !!(env.LINE_CHANNEL_ACCESS_TOKEN || ""),
+    hasSecret: !!(env.LINE_CHANNEL_SECRET || ""),
+    model: env.LINE_MODEL || "gemini-3.5-flash",
+  }, null, 2), { status: 200, headers: { "Content-Type": "application/json" } });
+}
