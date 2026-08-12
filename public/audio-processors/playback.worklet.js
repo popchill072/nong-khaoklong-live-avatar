@@ -8,6 +8,8 @@ class PCMProcessor extends AudioWorkletProcessor {
       if (event.data === "interrupt") {
         this.audioQueue = [];
         this.currentOffset = 0;
+      } else if (event.data && event.data.type === "volume") {
+        this.volume = Math.max(0, Math.min(4, Number(event.data.value) || 1.9));
       } else if (event.data instanceof Float32Array) {
         this.audioQueue.push(event.data);
       }

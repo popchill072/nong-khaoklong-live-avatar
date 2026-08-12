@@ -848,6 +848,32 @@ summary {
   flex: 1;
   word-break: break-word;
 }
+.diagCtl {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 11px;
+  color: #e8e2ee;
+}
+.diagRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  white-space: nowrap;
+}
+.diagRow input[type=range] {
+  flex: 1;
+  min-width: 60px;
+  accent-color: #ff6584;
+}
+.diagRow input[type=checkbox] {
+  accent-color: #ff6584;
+}
+.diagRow span {
+  min-width: 30px;
+  text-align: right;
+  color: #ffd3de;
+}
 .diagLine { white-space: pre-wrap; border-bottom: 1px dashed rgba(255,255,255,0.06); padding: 2px 0; }
 .diagLine.error   { color: #ff8a8a; }
 .diagLine.warn    { color: #ffd27a; }
@@ -867,6 +893,12 @@ summary {
   <div class="diagHead">🔧 วินิจฉัยการเชื่อมต่อ
     <button onclick="clearDiag()">ล้าง</button>
     <button onclick="toggleDiag()">ปิด</button>
+  </div>
+  <div class="diagCtl">
+    <label class="diagRow"><input type="checkbox" id="vadOn" onchange="saveVad()"> VAD อัตโนมัติ (ตัดเสียงพูดแทรก)</label>
+    <div class="diagRow">ความไว VAD: <input type="range" id="vadSilence" min="500" max="3000" step="100" value="1500" oninput="saveVad()"> <span id="vadVal">1500</span>ms</div>
+    <div class="diagRow">ระดับเสียง: <input type="range" id="volCtrl" min="0.5" max="3" step="0.1" value="1.9" oninput="saveVol()"> <span id="volVal">1.9</span>x</div>
+    <div class="diagRow">ความเร็วพูด: <input type="range" id="spdCtrl" min="0.6" max="1.6" step="0.05" value="1" oninput="saveSpd()"> <span id="spdVal">1.0</span>x</div>
   </div>
   <div class="diagList" id="diagList"></div>
 </div>
@@ -1085,6 +1117,31 @@ let voiceId=loadSetting('zhaok-voice','Leda');
 saveSetting('zhaok-voice','Leda');
 function loadSetting(k,d){try{return localStorage.getItem(k)||d}catch(e){return d}}
 function saveSetting(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+function loadNum(k,d){const n=parseFloat(loadSetting(k,''));return isNaN(n)?d:n}
+function initDiagControls(){
+  const vad=$('vadOn');if(vad)vad.checked=loadSetting('zhaok-vad','on')!=='off';
+  const vs=$('vadSilence');if(vs){vs.value=loadNum('zhaok-silence',1500);$('vadVal').textContent=vs.value}
+  const vc=$('volCtrl');if(vc){vc.value=loadNum('zhaok-vol',1.9);$('volVal').textContent=Number(vc.value).toFixed(1)}
+  const sc=$('spdCtrl');if(sc){sc.value=loadNum('zhaok-speed',1);$('spdVal').textContent=Number(sc.value).toFixed(2)}
+}
+function saveVad(){
+  const vad=$('vadOn');const vs=$('vadSilence');
+  if(vad)saveSetting('zhaok-vad',vad.checked?'on':'off');
+  if(vs){saveSetting('zhaok-silence',vs.value);$('vadVal').textContent=vs.value}
+  diag('info','VAD ตั้งค่า: '+(vad&&vad.checked?'เปิด':'ปิด')+' silence='+vs.value+'ms (มีผลรอบถัดไปของเซสชัน)');
+}
+function saveVol(){
+  const vc=$('volCtrl');if(!vc)return;
+  saveSetting('zhaok-vol',vc.value);$('volVal').textContent=Number(vc.value).toFixed(1);
+  if(player)player.setVolume(Number(vc.value));
+  diag('info','ระดับเสียง -> '+Number(vc.value).toFixed(1)+'x');
+}
+function saveSpd(){
+  const sc=$('spdCtrl');if(!sc)return;
+  saveSetting('zhaok-speed',sc.value);$('spdVal').textContent=Number(sc.value).toFixed(2);
+  if(player)player.setSpeed(Number(sc.value));
+  diag('info','ความเร็วพูด -> '+Number(sc.value).toFixed(2)+'x');
+}
 /* Dual-buffer crossfade: two stacked layers (avatarVideo + avatarVideoB).
    New clip loads hidden first, then fades in over 0.35s while the old one
    fades out — no jump, no black flash on mode switches. */
@@ -1112,6 +1169,7 @@ function preloadAvatarVideos(){
   });
 }
 preloadAvatarVideos();
+initDiagControls();
 
 function avElement(i){return i===0?avV:avVb}
 function onAvError(el){
@@ -1261,7 +1319,11 @@ function setupSession(){
       inputAudioTranscription:{},
       outputAudioTranscription:{},
       realtimeInputConfig:{
-        automaticActivityDetection:{disabled:false,silenceDurationMs:1500,prefixPaddingMs:500},
+        automaticActivityDetection:{
+          disabled:loadSetting('zhaok-vad','on')==='off',
+          silenceDurationMs:loadNum('zhaok-silence',1500),
+          prefixPaddingMs:500
+        },
         activityHandling:"ACTIVITY_HANDLING_UNSPECIFIED",
         turnCoverage:"TURN_INCLUDES_ONLY_ACTIVITY"
       },
@@ -1680,6 +1742,7 @@ function toBase64(buf){const b=new Uint8Array(buf);let s='';for(let i=0;i<b.leng
 class Player{
   async init(){
     this.ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000});
+    this.ctx.playbackRate=loadNum('zhaok-speed',1.0);
     this.ctx.addEventListener('statechange',()=>{
       if(this.ctx.state==='suspended'){
         diagStats.suspendCount++;
@@ -1692,8 +1755,11 @@ class Player{
     await this.ctx.audioWorklet.addModule('/audio-processors/playback.worklet.js');
     this.node=new AudioWorkletNode(this.ctx,'pcm-processor');
     this.node.connect(this.ctx.destination);
+    this.setVolume(loadNum('zhaok-vol',1.9));
   }
   async ensure(){if(this.ctx&&this.ctx.state==='suspended'){try{await this.ctx.resume();diag('info','resume() called เรียบร้อย')}catch(e){diag('error','resume() ล้มเหลว: '+e.message)}}}
+  setVolume(v){if(this.node)this.node.port.postMessage({type:'volume',value:v})}
+  setSpeed(v){if(this.ctx)this.ctx.playbackRate=v}
   play(b64){this.ensure();const bin=atob(b64);const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);const i16=new Int16Array(bytes.buffer);const f32=new Float32Array(i16.length);let sum=0;for(let i=0;i<i16.length;i++){const v=i16[i]/32768;f32[i]=v;sum+=v*v}const rms=Math.sqrt(sum/Math.max(1,i16.length));setLevelLv(rms);this.node.port.postMessage(f32)}
   interrupt(){this.node&&this.node.port.postMessage('interrupt')}
   destroy(){this.node&&this.ctx&&this.ctx.close();this.node=this.ctx=null}
