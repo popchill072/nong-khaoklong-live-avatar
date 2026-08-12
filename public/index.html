@@ -166,6 +166,16 @@ main {
   justify-content: center;
 }
 
+/* Sticky avatar: stays put while the chat column scrolls. Needs align-self
+   start so the stage keeps its natural height inside the grid. */
+.stage.sticky-stage {
+  position: sticky;
+  top: 20px;
+  align-self: start;
+  z-index: 3;
+  box-shadow: 0 10px 40px -12px rgba(80, 53, 70, 0.18);
+}
+
 .halo {
   position: absolute;
   width: 560px;
@@ -669,6 +679,11 @@ summary {
     order: -1;
     border-bottom: 1px solid rgba(240, 226, 235, 0.6);
   }
+  .stage.sticky-stage {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
   .avatarWrap {
     height: 100%;
     width: 100%;
@@ -775,6 +790,70 @@ summary {
     padding: 5px 10px;
   }
 }
+.diagBtn {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 99;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 101, 132, 0.35);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 6px 18px rgba(255, 101, 132, 0.25);
+  font-size: 18px;
+  cursor: pointer;
+}
+.diagPanel {
+  position: fixed;
+  right: 12px;
+  bottom: 62px;
+  z-index: 99;
+  width: min(360px, calc(100vw - 24px));
+  max-height: 55vh;
+  background: rgba(30, 24, 40, 0.96);
+  color: #e8e2ee;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  font: 11px/1.5 Consolas, Menlo, monospace;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.diagHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-weight: 600;
+  color: #ffd3de;
+}
+.diagHead button {
+  margin-left: auto;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  color: #e8e2ee;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.diagHead button:first-of-type { margin-left: 0; }
+.diagList {
+  overflow-y: auto;
+  padding: 6px 8px;
+  flex: 1;
+  word-break: break-word;
+}
+.diagLine { white-space: pre-wrap; border-bottom: 1px dashed rgba(255,255,255,0.06); padding: 2px 0; }
+.diagLine.error   { color: #ff8a8a; }
+.diagLine.warn    { color: #ffd27a; }
+.diagLine.interrupt { color: #ff9de2; }
+.diagLine.suspend { color: #9dc9ff; }
+.diagLine.info    { color: #b9efc9; }
 </style>
 </head>
 <body>
@@ -783,8 +862,16 @@ summary {
   <div class="brand"><img class="logo" src="logo.webp"><div><h1>น้องข้าวกล้อง AI Assistant</h1><p>V3 Live Avatar • Gemini Live • พูดคุยเสียงต่อเสียงฟรี</p></div></div>
   <div class="status" id="status"><span class="dot"></span>ยังไม่เชื่อมต่อ</div>
 </header>
+<button class="diagBtn" id="diagBtn" onclick="toggleDiag()" title="เปิด/ปิดหน้าต่างวินิจฉัยเสียง (error/quota/interrupt/suspend)">🔧</button>
+<div class="diagPanel" id="diagPanel" style="display:none">
+  <div class="diagHead">🔧 วินิจฉัยการเชื่อมต่อ
+    <button onclick="clearDiag()">ล้าง</button>
+    <button onclick="toggleDiag()">ปิด</button>
+  </div>
+  <div class="diagList" id="diagList"></div>
+</div>
 <main>
-<section class="stage" id="stage">
+<section class="stage sticky-stage" id="stage">
   <div class="halo"></div>
   <div class="bubble" id="bubble"><b>สวัสดีค่ะ 💗</b><br>กด “เริ่มคุย” แล้วพูดกับข้าวกล้องได้เลยนะคะ<div class="level"><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i><i class="bar"></i></div></div>
   <div class="avatarWrap" id="avatarWrap">
@@ -829,6 +916,32 @@ let ws=null,token=null,connected=false,muted=false,interrupted=false;
 let streamer=null,player=null;
 let memUser='', memModel='';   // streaming transcript accumulation (voice)
 const $=x=>document.getElementById(x);
+
+/* ------- Diagnostic log (on-screen + console) ------- */
+const DIAG_MAX=200;
+const diagStats={audioChunks:0,audioBytes:0,errors:0,interrupts:0,suspendCount:0,reconnects:0};
+function diag(kind,msg){
+  const t=new Date().toISOString().slice(11,19);
+  const line=`${t} [${kind}] ${msg}`;
+  console.log('%c'+line,'color:#a78bfa');
+  const el=$('diagList');
+  if(el){
+    const d=document.createElement('div');
+    d.className='diagLine '+kind;
+    d.textContent=line;
+    el.appendChild(d);
+    while(el.children.length>DIAG_MAX)el.removeChild(el.firstChild);
+    el.scrollTop=el.scrollHeight;
+  }
+}
+function toggleDiag(){const p=$('diagPanel');p.style.display=p.style.display==='none'?'block':'none';if(p.style.display==='block')renderDiagStats()}
+function clearDiag(){$('diagList').innerHTML=''}
+function renderDiagStats(){
+  const el=$('diagList');
+  if(!el)return;
+  el.insertAdjacentHTML('afterbegin',
+    `<div class="diagLine info">── สถิติ: audio ${diagStats.audioChunks} chunks / ${(diagStats.audioBytes/1024).toFixed(1)}KB | errors ${diagStats.errors} | interrupts ${diagStats.interrupts} | suspend ${diagStats.suspendCount} | reconnect ${diagStats.reconnects} ──</div>`);
+}
 
 /* --- iOS audio-session hint: keep speaker output on while mic is open --- */
 function initAudioSession(){
@@ -1096,12 +1209,13 @@ async function toggleConnect(){
     await loadFromCloud();
     status("กำลังสร้าง token...");
     const r=await fetch('/gemini-token',{method:'POST'});
-    if(!r.ok){const e=await r.json().catch(()=>({}));throw Error(e.error||('HTTP '+r.status))}
+    if(!r.ok){const e=await r.json().catch(()=>({}));diag('error','mint token HTTP '+r.status+': '+e.error);throw Error(e.error||('HTTP '+r.status))}
     const data=await r.json();token=data.token;
     status("กำลังเชื่อมต่อ...");
     ws=new WebSocket(`${WS_BASE}?access_token=${token}`);
     ws.onopen=()=>{
       connected=true;
+      diag('info','WebSocket เปิดแล้ว');
       $('connectBtn').textContent='ตัดการเชื่อมต่อ';
       $('micBtn').disabled=false;$('micBtn').classList.remove('off');$('micBtn').classList.add('on');
       status('กำลังคุยกับข้าวกล้อง',true);
@@ -1111,9 +1225,12 @@ async function toggleConnect(){
       setupSession();
     };
     ws.onmessage=onWsMessage;
-    ws.onerror=()=>{alert('เชื่อมต่อ WebSocket ไม่สำเร็จ กรุณาลองใหม่');disconnect()};
-    ws.onclose=(ev)=>{if(connected){alert('การเชื่อมต่อถูกปิดโดยเซิร์ฟเวอร์: '+(ev&&ev.reason||''));disconnect()}};
-  }catch(e){console.error(e);alert('เชื่อมต่อไม่ได้: '+e.message);disconnect()}
+    ws.onerror=()=>{diagStats.errors++;diag('error','WebSocket error (ไม่สามารถเชื่อมต่อ/ถูกตัด)');alert('เชื่อมต่อ WebSocket ไม่สำเร็จ กรุณาลองใหม่');disconnect()};
+    ws.onclose=(ev)=>{
+      diag('warn','WebSocket close code='+(ev&&ev.code)+' reason="'+(ev&&ev.reason||'')+'"');
+      if(connected){diagStats.reconnects++;alert('การเชื่อมต่อถูกปิดโดยเซิร์ฟเวอร์: '+(ev&&ev.reason||''));disconnect()}
+    };
+  }catch(e){diag('error','เชื่อมต่อไม่ได้: '+e.message);console.error(e);alert('เชื่อมต่อไม่ได้: '+e.message);disconnect()}
 }
 
 function setupSession(){
@@ -1243,7 +1360,7 @@ async function onWsMessage(ev){
     data=JSON.parse(raw);
   }catch{return}
   if(data.setupComplete){status('กำลังคุยกับข้าวกล้อง',true);sendMemoryHistory();greet();return}
-  if(data.error){console.error('Gemini error',data.error);return}
+  if(data.error){diagStats.errors++;diag('error','Gemini error: '+(data.error.message||JSON.stringify(data.error).slice(0,300)));console.error('Gemini error',data.error);return}
   if(data.toolCall&&data.toolCall.functionCalls){
     for(const fc of data.toolCall.functionCalls){
       if(fc.name==='generate_image')handleImageTool(fc);
@@ -1261,6 +1378,7 @@ async function onWsMessage(ev){
   if(!sc)return;
 if(sc.interrupted){
     interrupted=true;if(player)player.interrupt();setLevelLv(0);
+    diagStats.interrupts++;diag('interrupt','มีเสียงแทรกระหว่างตอบ (#'+diagStats.interrupts+')');
     memUser='';memModel='';
     $('avatarWrap').classList.remove('talking');$('avatarWrap').classList.add('listening');
     $('wave').textContent='🎧 ฟังอยู่ค่ะ...';
@@ -1270,6 +1388,7 @@ if(sc.interrupted){
     for(const part of turn.parts){
       if(part.inlineData&&part.inlineData.data&&player){
         if(interrupted){interrupted=false}
+        diagStats.audioChunks++;diagStats.audioBytes+=part.inlineData.data.length;
 $('avatarWrap').classList.remove('listening');$('avatarWrap').classList.add('talking');
         $('micBtn').classList.add('on');
         $('wave').textContent='🗣️ กำลังตอบค่ะ...';
@@ -1291,6 +1410,7 @@ if(sc.inputTranscription&&sc.inputTranscription.text){
   }
   if(sc.turnComplete){
     if(player)player.interrupt();setLevelLv(0);
+    diag('info','turnComplete — เทิร์นนี้ได้เสียง '+diagStats.audioChunks+' chunks รวม '+diagStats.audioBytes+'B');
     $('avatarWrap').classList.remove('talking');$('avatarWrap').classList.add('listening');
     setAvatarMode('listening');
     $('wave').textContent='🎙️ ฟังอยู่ค่ะ';
@@ -1543,10 +1663,13 @@ class Streamer{
     this.node.port.onmessage=e=>{
       if(e.data.type==='audio'&&!muted)sendWs({realtimeInput:{audio:{data:toBase64(pcm16(e.data.data)),mimeType:'audio/pcm'}}});
     };
-    this.stream=await navigator.mediaDevices.getUserMedia({audio:{sampleRate:16000,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    try{
+      this.stream=await navigator.mediaDevices.getUserMedia({audio:{sampleRate:16000,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    }catch(e){diag('error','getUserMedia ล้มเหลว: '+e.message);throw e}
     this.src=this.ctx.createMediaStreamSource(this.stream);
     this.src.connect(this.node);
-    if(this.ctx.state==='suspended')await this.ctx.resume();
+    if(this.ctx.state==='suspended'){try{await this.ctx.resume()}catch(e){diag('error','resume capture ctx: '+e.message)}}
+    diag('info','ไมโครโฟนพร้อม (capture '+this.ctx.sampleRate+'Hz)');
   }
   stop(){this.src&&this.src.disconnect();this.stream&&this.stream.getTracks().forEach(t=>t.stop());this.ctx&&this.ctx.close();this.src=this.stream=this.ctx=null}
 }
@@ -1557,12 +1680,20 @@ function toBase64(buf){const b=new Uint8Array(buf);let s='';for(let i=0;i<b.leng
 class Player{
   async init(){
     this.ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000});
-    if(this.ctx.state==='suspended'){try{await this.ctx.resume()}catch(e){}}
+    this.ctx.addEventListener('statechange',()=>{
+      if(this.ctx.state==='suspended'){
+        diagStats.suspendCount++;
+        diag('suspend','AudioContext suspended (รอบนี้ #'+diagStats.suspendCount+')');
+      }else{
+        diag('info','AudioContext state -> '+this.ctx.state);
+      }
+    });
+    if(this.ctx.state==='suspended'){try{await this.ctx.resume()}catch(e){diag('error','resume at init: '+e.message)}}
     await this.ctx.audioWorklet.addModule('/audio-processors/playback.worklet.js');
     this.node=new AudioWorkletNode(this.ctx,'pcm-processor');
     this.node.connect(this.ctx.destination);
   }
-  async ensure(){if(this.ctx&&this.ctx.state==='suspended'){try{await this.ctx.resume()}catch(e){}}}
+  async ensure(){if(this.ctx&&this.ctx.state==='suspended'){try{await this.ctx.resume();diag('info','resume() called เรียบร้อย')}catch(e){diag('error','resume() ล้มเหลว: '+e.message)}}}
   play(b64){this.ensure();const bin=atob(b64);const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);const i16=new Int16Array(bytes.buffer);const f32=new Float32Array(i16.length);let sum=0;for(let i=0;i<i16.length;i++){const v=i16[i]/32768;f32[i]=v;sum+=v*v}const rms=Math.sqrt(sum/Math.max(1,i16.length));setLevelLv(rms);this.node.port.postMessage(f32)}
   interrupt(){this.node&&this.node.port.postMessage('interrupt')}
   destroy(){this.node&&this.ctx&&this.ctx.close();this.node=this.ctx=null}

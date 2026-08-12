@@ -5,6 +5,7 @@ import {
   handleLineWebhook,
   lineHealth,
   serveLineMedia,
+  handleScheduled,
 } from "./line.js";
 
 // Handles to the original worker services. The LINE module calls these
@@ -72,6 +73,12 @@ export default {
     // Serve static assets from the bundled ./public directory.
     const asset = await env.ASSETS.fetch(request);
     return asset;
+  },
+
+  // Cron trigger: LINE appointment reminders (opt-in via LINE_ENABLED +
+  // LINE_REMINDERS_ENABLED). Fires on the schedule from wrangler.toml.
+  async scheduled(_event, env) {
+    await handleScheduled(env, lineServices);
   },
 };
 
@@ -342,8 +349,9 @@ async function handleCalendar(request, env) {
       if (!title) return json({ error: "Missing title" }, 400);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ error: "Missing/invalid date (YYYY-MM-DD)" }, 400);
       const time = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(body.time || "").trim()) ? String(body.time).trim() : "09:00";
+      const userId = String(body.userId || "").trim();
       const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-      events.push({ id, title, at: date, time, createdAt: new Date().toISOString() });
+      events.push({ id, title, at: date, time, userId: userId || undefined, createdAt: new Date().toISOString() });
       if (events.length > 100) events = events.sort((a, b) => (a.at + a.time).localeCompare(b.at + b.time)).slice(0, 100);
       await env.MEMORY.put(key, JSON.stringify(events));
       return json({ ok: true, id, events: events.sort((a, b) => (a.at + a.time).localeCompare(b.at + b.time)).slice(0, 100) }, 200);

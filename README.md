@@ -63,6 +63,8 @@ LINE bot จะทำงานเมื่อตั้งตัวแปร LINE
 | `LINE_CHANNEL_ACCESS_TOKEN` | Channel access token (กดปุ่ม **Issue** ใน Messaging API) | ✅ |
 | `LINE_MODEL` *(optional)* | โมเดลข้อความที่ใช้ตอบ LINE เช่น `gemini-3.5-flash` (ค่าเริ่มต้น) | — |
 | `LINE_BASE_URL` *(optional)* | URL ของ worker ถ้าต่างจาก default (ใช้ตอนส่งรูปจาก generate_image) | — |
+| `LINE_REMINDERS_ENABLED` *(optional)* | `true` (ค่าเริ่มต้น) เปิดการแจ้งเตือนเชิงรุกจากนัดหมาย; `false` = ปิด | — |
+| `LINE_REMINDER_OFFSETS` *(optional)* | ช่วงเตือนล่วงหน้า (นาที, คั่นคอมม่า) เช่น `60,30,10,0` — 0 = ตอนถึงเวลา | — |
 
 > ใช้คำสั่งได้ถ้าไม่สะดวกกด dashboard:
 > ```
@@ -80,6 +82,13 @@ LINE bot จะทำงานเมื่อตั้งตัวแปร LINE
 - "จดไว้ว่าพรุ่งนี้ซื้อของ" → บันทึก notes
 - "พรุ่งนี้มีนัดอะไร" → เช็ค calendar
 - "/health" ไม่มี — แต่เปิด `https://<worker>.workers.dev/api/line/health` ในบราวเซอร์เพื่อดูสถานะว่า LINE โมดูลเปิด/ปิด มี token+secret ครบไหม
+
+### การแจ้งเตือนนัดหมาย (LINE push)
+- เมื่อจดนัดทาง LINE ("จดนัดพบหมอ พรุ่งนี้บ่าย 2") ระบบจะเก็บ userId ของคนจดไว้กับนัดนั้น
+- Cron trigger ทุก 1 นาที (`wrangler.toml → [triggers]`) ตรวจ calendar → เมื่อถึงจุดเตือน (ค่าเริ่มต้น: ล่วงหน้า 60 / 30 / 10 นาที + ตอนถึงเวลา) จะ push ข้อความเตือนถึงคนจดนัด (LINE Push API)
+- การ push ใช้ quota ของ LINE (ไทย ~500 ข้อความ/เดือน, ญี่ปุ่น/ไต้หวัน ~200/เดือน) — การ reply ระหว่างคุยไม่นับ
+- นัดที่จดจากเว็บ (ไม่มี userId) จะไม่ถูกเตือนอัตโนมัติ
+- จำกัดการเตือน: ตัดรอบที่เลยเที่ยงคืนข้ามวันออก + ป้องกันซ้ำด้วย KV marker (`reminder:{id}:{offset}`, TTL 7 วัน)
 
 ### ถ้าหน้า LINE ตอบช้าหรือ error
 - เปิด `/api/line/health` ดูว่า `enabled / hasToken / hasSecret = true`
@@ -106,6 +115,7 @@ LINE bot จะทำงานเมื่อตั้งตัวแปร LINE
 ## Feature flags (ชุดที่เปิด/ปิดได้)
 - `LINE_ENABLED` — ปิด-เปิดโมดูล LINE ทั้งหมด (false = เว็บทำงานปกติ, LINE webhook ตอบ 404)
 - `LINE_MODEL` — เปลี่ยนโมเดลข้อความฝั่ง LINE
+- `LINE_REMINDERS_ENABLED` + `LINE_REMINDER_OFFSETS` — เปิด/ปรับการแจ้งเตือนนัดอัตโนมัติ (LINE push)
 - `SEARCH_ENGINE` + `SEARCH_API_KEY` *(optional)* — เปลี่ยนเครื่องมือค้นจาก Wikipedia เป็น `bing` / `tavily` (มี free tier: Bing 1,000/เดือน, Tavily 1,000 credits/เดือน ไม่ต้องบัตร)
 
 ---

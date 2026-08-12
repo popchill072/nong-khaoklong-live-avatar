@@ -224,7 +224,7 @@ async function runAIDialog(env, services, userId, userText) {
     });
     for (const p of calls) {
       const { name, args } = p.functionCall;
-      const out = await runTool(name, args || {}, env, services, baseUrl);
+      const out = await runTool(name, args || {}, env, services, baseUrl, userId);
       if (name === "generate_image" && out.image) image = out.image;
       contents.push({ role: "user", parts: [{ functionResponse: { name, response: out.response } }] });
     }
@@ -288,7 +288,7 @@ async function callGemini(model, apiKey, contents) {
 
 // Route a tool call back to the ORIGINAL worker handlers (no copied logic).
 // Returns the LINE-compatible {response} plus optional inline image.
-async function runTool(name, args, env, services, baseUrl) {
+async function runTool(name, args, env, services, baseUrl, userId) {
   const fallback = { response: { error: `tool ${name} failed` } };
   try {
     switch (name) {
@@ -329,7 +329,7 @@ async function runTool(name, args, env, services, baseUrl) {
         const date = String(args.date || "").trim();
         if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { response: { error: "missing/invalid date" } };
         const r = await services.handleCalendar(new Request("https://internal/api/calendar", {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, date, time: args.time || "" }),
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, date, time: args.time || "", userId }),
         }), env);
         const d = await r.json().catch(() => ({}));
         return { response: { ok: !!d.ok, date, time: args.time || "09:00" } };
@@ -407,6 +407,88 @@ export async function replyMessages(env, replyToken, messages) {
   const d = await r.json().catch(() => ({}));
   if (!r.ok) {
     console.error("LINE reply failed", r.status, JSON.stringify(d).slice(0, 500));
+  }
+}
+
+// Send a proactive push message (uses the LINE push quota, ~500/month free on
+// the TH plan) to the user who booked the appointment.
+async function pushMessage(env, userId, text) {
+  const token = env.LINE_CHANNEL_ACCESS_TOKEN || "";
+  if (!token || !userId) return false;
+  const r = await fetch(LINE_API + "/message/push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + token,
+    },
+    body: JSON.stringify({ to: userId, messages: [{ type: "text", text: text.slice(0, 5000) }] }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    console.error("LINE push failed", r.status, JSON.stringify(d).slice(0, 500));
+  }
+  return r.ok;
+}
+
+// Return the current Bangkok date (YYYY-MM-DD) and minutes-of-day.
+function bangkokNow() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Bangkok",
+  }).formatToParts(new Date());
+  const get = (t) => (parts.find((p) => p.type === t) || {}).value || "";
+  const date = `${get("year")}-${get("month")}-${get("day")}`;
+  let hour = parseInt(get("hour"), 10);
+  if (hour === 24) hour = 0; // some locales format midnight as "24:00"
+  const minutes = hour * 60 + parseInt(get("minute"), 10);
+  return { date, minutes };
+}
+
+// Cron-triggered reminder check. Reads the shared calendar, finds events for
+// today that belong to a LINE user and hit a reminder offset, then pushes a
+// message. Each (event, offset) is marked in KV so it fires only once.
+export async function handleScheduled(env, services) {
+  if (String(env.LINE_ENABLED).toLowerCase() !== "true") return;
+  if (String(env.LINE_REMINDERS_ENABLED).toLowerCase() === "false") return;
+  if (!env.LINE_CHANNEL_ACCESS_TOKEN) return;
+
+  const now = bangkokNow();
+  console.log(`LINE reminder cron ${now.date} ${Math.floor(now.minutes / 60)}:${String(now.minutes % 60).padStart(2, "0")}`);
+
+  const offsets = (env.LINE_REMINDER_OFFSETS || "60,30,10,0")
+    .split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n) && n >= 0)
+    .sort((a, b) => a - b);
+  if (!offsets.length) return;
+
+  const r = await services.handleCalendar(new Request("https://internal/api/calendar"), env);
+  const d = await r.json().catch(() => ({}));
+  const events = Array.isArray(d.events) ? d.events : [];
+  if (!events.length) return;
+
+  for (const ev of events) {
+    if (ev.at !== now.date) continue;
+    const userId = String(ev.userId || "").trim();
+    if (!userId) continue;
+
+    const [eh, em] = String(ev.time || "09:00").split(":").map((n) => parseInt(n, 10));
+    const eventMinutes = (eh || 0) * 60 + (em || 0);
+
+    for (const off of offsets) {
+      const target = eventMinutes - off;
+      if (target < 0) continue; // reminder would fall on the previous day
+      if (now.minutes !== target) continue;
+
+      const key = "reminder:" + ev.id + ":" + off;
+      const done = await env.MEMORY.get(key).catch(() => null);
+      if (done) continue;
+
+      const label = off === 0
+        ? "ถึงเวลานัดแล้ว"
+        : off < 60 ? `อีก ${off} นาทีจะถึงนัด` : `อีก ${off} นาที (${Math.floor(off / 60)} ชม. ${off % 60 ? off % 60 + " นาที" : ""}) จะถึงนัด`;
+      const text = `พี่จ๋า น้องข้าวกล้องเตือนค่ะ ${label}:\n"${ev.title}"\n📅 ${ev.at} ⏰ ${ev.time}\n\nเตรียมตัวได้เลยนะคะ 💛`;
+      const ok = await pushMessage(env, userId, text);
+      if (ok) await env.MEMORY.put(key, "1", { expirationTtl: 7 * 24 * 3600 });
+    }
   }
 }
 

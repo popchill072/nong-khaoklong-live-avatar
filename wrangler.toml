@@ -13,5 +13,10 @@ binding = "ASSETS"
 binding = "MEMORY"
 id = "d3626cb9ce154597a8d25c468093b687"
 
+# LINE appointment reminders: check every minute and push due alerts.
+# Free plan allows a few cron triggers; the handler is cheap (KV read + push).
+[triggers]
+crons = ["* * * * *"]
+
 # Local dev: read GEMINI_API_KEY from .env via `wrangler dev`
 # (set the real secret in Cloudflare dashboard: Settings > Variables and Secrets)
