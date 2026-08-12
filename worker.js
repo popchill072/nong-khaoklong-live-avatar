@@ -318,20 +318,23 @@ function strip(s) {
     .trim();
 }
 
-/* Calendar (appointments) stored in KV.
-   GET    /api/calendar           -> {events:[{id,title,at,allDay}] , sorted by time}
-   GET    /api/calendar?date=YYYY-MM-DD  -> events on that date
-   POST   /api/calendar {title, date, time?}  -> add (date required, YYYY-MM-DD; time HH:MM optional)
+/* Calendar (appointments) stored in KV, namespaced per owner key
+   (?key=me is the website, ?key=<LINE userId> is a LINE user).
+   GET    /api/calendar?key=me           -> {events:[{id,title,at,time}] , sorted by time}
+   GET    /api/calendar?key=me&date=YYYY-MM-DD  -> events on that date
+   POST   /api/calendar?key=me {title, date, time?}  -> add (date required, YYYY-MM-DD; time HH:MM optional)
    POST   /api/calendar {delete:id}       -> remove an event by id
    Cap 100 events. */
 async function handleCalendar(request, env) {
-  const key = "calendar:me";
+  const url = new URL(request.url);
+  const key = (url.searchParams.get("key") || "").trim() || "me";
+  const kvKey = "calendar:" + key;
   try {
-    const raw = await env.MEMORY.get(key);
+    const raw = await env.MEMORY.get(kvKey);
     let events = raw ? JSON.parse(raw).filter(Boolean) : [];
 
     if (request.method === "GET") {
-      const date = (new URL(request.url).searchParams.get("date") || "").trim();
+      const date = (url.searchParams.get("date") || "").trim();
       if (date) events = events.filter(e => e.at === date);
       events = events.sort((a, b) => (a.at + a.time).localeCompare(b.at + b.time)).slice(0, 100);
       return json({ events }, 200);
@@ -341,7 +344,7 @@ async function handleCalendar(request, env) {
       const body = await request.json().catch(() => ({}));
       if (body.delete) {
         events = events.filter(e => e.id !== String(body.delete));
-        await env.MEMORY.put(key, JSON.stringify(events));
+        await env.MEMORY.put(kvKey, JSON.stringify(events));
         return json({ ok: true, deleted: true, events: events.slice(0, 100) }, 200);
       }
       const title = String(body.title || "").trim();
@@ -353,18 +356,34 @@ async function handleCalendar(request, env) {
       const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
       events.push({ id, title, at: date, time, userId: userId || undefined, createdAt: new Date().toISOString() });
       if (events.length > 100) events = events.sort((a, b) => (a.at + a.time).localeCompare(b.at + b.time)).slice(0, 100);
-      await env.MEMORY.put(key, JSON.stringify(events));
+      await env.MEMORY.put(kvKey, JSON.stringify(events));
+      if (userId) await rememberCalendarUser(env, userId);
       return json({ ok: true, id, events: events.sort((a, b) => (a.at + a.time).localeCompare(b.at + b.time)).slice(0, 100) }, 200);
     }
 
     if (request.method === "DELETE") {
-      await env.MEMORY.delete(key);
+      await env.MEMORY.delete(kvKey);
       return json({ ok: true, cleared: true, events: [] }, 200);
     }
 
     return json({ error: "Method not allowed" }, 405);
   } catch (e) {
     return json({ error: String(e?.message || e) }, 500);
+  }
+}
+
+// Keep an index of LINE users who have calendar events, so the reminder cron
+// can enumerate per-user calendars without scanning KV keys.
+async function rememberCalendarUser(env, userId) {
+  try {
+    const raw = await env.MEMORY.get("calendar:users");
+    const list = raw ? JSON.parse(raw).filter(Boolean) : [];
+    if (!list.includes(userId)) {
+      list.push(userId);
+      await env.MEMORY.put("calendar:users", JSON.stringify(list.slice(-200)));
+    }
+  } catch (e) {
+    console.error("rememberCalendarUser", e?.message || e);
   }
 }
 
@@ -391,23 +410,24 @@ function handleNow() {
   }, 200);
 }
 
-/* Notes & todos (per-owner, same KV namespace as chat memory).
-   GET  /api/notes          -> {notes:[{text,created}]}
-   POST /api/notes {text}  -> append (cap 50)
+/* Notes & todos (namespaced per owner key, ?key=me = website).
+   GET  /api/notes?key=me          -> {notes:[{text,created}]}
+   POST /api/notes?key=me {text}  -> append (cap 50)
    POST /api/notes {clear} -> wipe all */
 async function handleNotes(request, env) {
-  const key = "notes:me";
+  const key = (new URL(request.url).searchParams.get("key") || "").trim() || "me";
+  const kvKey = "notes:" + key;
   try {
     if (request.method === "GET") {
-      const raw = await env.MEMORY.get(key);
+      const raw = await env.MEMORY.get(kvKey);
       return json({ notes: raw ? JSON.parse(raw).filter(Boolean) : [] }, 200);
     }
     if (request.method === "POST") {
       const body = await request.json().catch(() => ({}));
-      const raw = await env.MEMORY.get(key);
+      const raw = await env.MEMORY.get(kvKey);
       let notes = raw ? JSON.parse(raw) : [];
       if (body.clear) {
-        await env.MEMORY.delete(key);
+        await env.MEMORY.delete(kvKey);
         return json({ notes: [], cleared: true }, 200);
       }
       const text = String(body.text || "").trim();
@@ -415,7 +435,7 @@ async function handleNotes(request, env) {
       if (text.length > 2000) return json({ error: "Note too long" }, 400);
       notes.push({ text, created: new Date().toISOString() });
       if (notes.length > 50) notes = notes.slice(-50);
-      await env.MEMORY.put(key, JSON.stringify(notes));
+      await env.MEMORY.put(kvKey, JSON.stringify(notes));
       return json({ ok: true, notes }, 200);
     }
     return json({ error: "Method not allowed" }, 405);

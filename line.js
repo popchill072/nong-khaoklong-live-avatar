@@ -312,14 +312,14 @@ async function runTool(name, args, env, services, baseUrl, userId) {
       case "save_note": {
         const text = String(args.text || "").trim();
         if (!text) return { response: { error: "missing text" } };
-        const r = await services.handleNotes(new Request("https://internal/api/notes", {
+        const r = await services.handleNotes(new Request("https://internal/api/notes?key=" + encodeURIComponent(userId), {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
         }), env);
         const d = await r.json().catch(() => ({}));
         return { response: { ok: !!d.ok, count: (d.notes || []).length } };
       }
       case "get_notes": {
-        const r = await services.handleNotes(new Request("https://internal/api/notes"), env);
+        const r = await services.handleNotes(new Request("https://internal/api/notes?key=" + encodeURIComponent(userId)), env);
         const d = await r.json().catch(() => ({}));
         const notes = (d.notes || []).slice(-20).map((n, i) => `${i + 1}. ${n.text}`).join("\n");
         return { response: { count: (d.notes || []).length, notes_text: notes || "(ยังไม่มีบันทึก)" } };
@@ -328,7 +328,7 @@ async function runTool(name, args, env, services, baseUrl, userId) {
         const title = String(args.title || "").trim();
         const date = String(args.date || "").trim();
         if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { response: { error: "missing/invalid date" } };
-        const r = await services.handleCalendar(new Request("https://internal/api/calendar", {
+        const r = await services.handleCalendar(new Request("https://internal/api/calendar?key=" + encodeURIComponent(userId), {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, date, time: args.time || "", userId }),
         }), env);
         const d = await r.json().catch(() => ({}));
@@ -336,8 +336,9 @@ async function runTool(name, args, env, services, baseUrl, userId) {
       }
       case "get_events": {
         const date = String(args.date || "").trim();
+        const sep = date ? "&" : "?";
         const q = date ? `?date=${encodeURIComponent(date)}` : "";
-        const r = await services.handleCalendar(new Request("https://internal/api/calendar" + q), env);
+        const r = await services.handleCalendar(new Request("https://internal/api/calendar" + q + (date ? sep : "?") + "key=" + encodeURIComponent(userId)), env);
         const d = await r.json().catch(() => ({}));
         const evs = (d.events || []).map((e) => `- ${e.at}${e.time ? " " + e.time : ""}\n  ${e.title}`).join("\n");
         return { response: { count: (d.events || []).length, events_text: evs || "(ไม่มีนัด)" } };
@@ -455,39 +456,53 @@ export async function handleScheduled(env, services) {
   const now = bangkokNow();
   console.log(`LINE reminder cron ${now.date} ${Math.floor(now.minutes / 60)}:${String(now.minutes % 60).padStart(2, "0")}`);
 
-  const offsets = (env.LINE_REMINDER_OFFSETS || "60,30,10,0")
+  // Reminder policy: one push per event today. Default fires at 60/10/0 min.
+  // Env override e.g. "0" = only at the event time (economical). This keeps
+  // usage far under the LINE push quota (~500 msgs/month on the TH plan).
+  const offsets = (env.LINE_REMINDER_OFFSETS || "60,10,0")
     .split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n) && n >= 0)
     .sort((a, b) => a - b);
   if (!offsets.length) return;
 
-  const r = await services.handleCalendar(new Request("https://internal/api/calendar"), env);
-  const d = await r.json().catch(() => ({}));
-  const events = Array.isArray(d.events) ? d.events : [];
-  if (!events.length) return;
+  // Enumerate LINE users who have calendar events (index written on add_event).
+  const usersRaw = await env.MEMORY.get("calendar:users").catch(() => null);
+  const users = usersRaw ? JSON.parse(usersRaw).filter(Boolean) : [];
 
-  for (const ev of events) {
-    if (ev.at !== now.date) continue;
-    const userId = String(ev.userId || "").trim();
-    if (!userId) continue;
+  const cals = [];
+  for (const uid of users) cals.push({ uid, url: "https://internal/api/calendar?key=" + encodeURIComponent(uid) });
+  // Legacy: events written before namespacing live under calendar:me while
+  // still carrying a userId — check them too so nothing is missed.
+  cals.push({ uid: null, url: "https://internal/api/calendar?key=me" });
 
-    const [eh, em] = String(ev.time || "09:00").split(":").map((n) => parseInt(n, 10));
-    const eventMinutes = (eh || 0) * 60 + (em || 0);
+  for (const cal of cals) {
+    const r = await services.handleCalendar(new Request(cal.url), env);
+    const d = await r.json().catch(() => ({}));
+    const events = Array.isArray(d.events) ? d.events : [];
+    for (const ev of events) {
+      if (ev.at !== now.date) continue;
+      const userId = String(ev.userId || "").trim();
+      if (!userId) continue;
+      if (cal.uid && userId !== cal.uid) continue;
 
-    for (const off of offsets) {
-      const target = eventMinutes - off;
-      if (target < 0) continue; // reminder would fall on the previous day
-      if (now.minutes !== target) continue;
+      const [eh, em] = String(ev.time || "09:00").split(":").map((n) => parseInt(n, 10));
+      const eventMinutes = (eh || 0) * 60 + (em || 0);
 
-      const key = "reminder:" + ev.id + ":" + off;
-      const done = await env.MEMORY.get(key).catch(() => null);
-      if (done) continue;
+      for (const off of offsets) {
+        const target = eventMinutes - off;
+        if (target < 0) continue; // reminder would fall on the previous day
+        if (now.minutes !== target) continue;
 
-      const label = off === 0
-        ? "ถึงเวลานัดแล้ว"
-        : off < 60 ? `อีก ${off} นาทีจะถึงนัด` : `อีก ${off} นาที (${Math.floor(off / 60)} ชม. ${off % 60 ? off % 60 + " นาที" : ""}) จะถึงนัด`;
-      const text = `พี่จ๋า น้องข้าวกล้องเตือนค่ะ ${label}:\n"${ev.title}"\n📅 ${ev.at} ⏰ ${ev.time}\n\nเตรียมตัวได้เลยนะคะ 💛`;
-      const ok = await pushMessage(env, userId, text);
-      if (ok) await env.MEMORY.put(key, "1", { expirationTtl: 7 * 24 * 3600 });
+        const key = "reminder:" + ev.id + ":" + off;
+        const done = await env.MEMORY.get(key).catch(() => null);
+        if (done) continue;
+
+        const label = off === 0
+          ? "ถึงเวลานัดแล้ว"
+          : off < 60 ? `อีก ${off} นาทีจะถึงนัด` : `อีก ${off} นาที (${Math.floor(off / 60)} ชม. ${off % 60 ? off % 60 + " นาที" : ""}) จะถึงนัด`;
+        const text = `พี่จ๋า น้องข้าวกล้องเตือนค่ะ ${label}:\n"${ev.title}"\n📅 ${ev.at} ⏰ ${ev.time}\n\nเตรียมตัวได้เลยนะคะ 💛`;
+        const ok = await pushMessage(env, userId, text);
+        if (ok) await env.MEMORY.put(key, "1", { expirationTtl: 7 * 24 * 3600 });
+      }
     }
   }
 }
