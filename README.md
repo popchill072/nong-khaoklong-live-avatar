@@ -65,6 +65,7 @@ LINE bot จะทำงานเมื่อตั้งตัวแปร LINE
 | `LINE_BASE_URL` *(optional)* | URL ของ worker ถ้าต่างจาก default (ใช้ตอนส่งรูปจาก generate_image) | — |
 | `LINE_REMINDERS_ENABLED` *(optional)* | `true` (ค่าเริ่มต้น) เปิดการแจ้งเตือนเชิงรุกจากนัดหมาย; `false` = ปิด | — |
 | `LINE_REMINDER_OFFSETS` *(optional)* | ช่วงเตือนล่วงหน้า (นาที, คั่นคอมม่า) เช่น `60,10,0` (ค่าเริ่มต้น) — 0 = ตอนถึงเวลา; ยิ่งน้อยรอบยิ่งประหยัด push quota | — |
+| `LINE_DAILY_BRIEF` *(optional)* | เวลาสรุปวันนี้แบบอัตโนมัติ (เวลาไทย HH:MM) เช่น `08:00` — push สรุปนัด+โน้ตให้ผู้ใช้ทุกคนที่เคยคุย 1 ครั้ง/คน/วัน (ไม่ตั้ง = ปิด) | — |
 
 > ใช้คำสั่งได้ถ้าไม่สะดวกกด dashboard:
 > ```
@@ -81,6 +82,7 @@ LINE bot จะทำงานเมื่อตั้งตัวแปร LINE
 - "ตอนนี้กี่โมง" → ตอบเวลาจริง (เรียก tool get_now)
 - "จดไว้ว่าพรุ่งนี้ซื้อของ" → บันทึก notes
 - "พรุ่งนี้มีนัดอะไร" → เช็ค calendar
+- **คำสั่งลัด** (ตอบจาก KV ทันที ไม่เปลือง Gemini/WS): "สรุปวันนี้" / "นัดวันนี้" / "ดูโน้ต" / "ช่วยเหลือ" — มีปุ่ม Quick Reply เด้งให้กดด้วย (มีบนเว็บ "📋 สรุปวันนี้" ด้วย)
 - "/health" ไม่มี — แต่เปิด `https://<worker>.workers.dev/api/line/health` ในบราวเซอร์เพื่อดูสถานะว่า LINE โมดูลเปิด/ปิด มี token+secret ครบไหม
 
 ### การแจ้งเตือนนัดหมาย (LINE push)
@@ -89,6 +91,11 @@ LINE bot จะทำงานเมื่อตั้งตัวแปร LINE
 - ข้อมูลแยกต่อผู้ใช้: โน้ต/นัดของ LINE แต่ละคนอยู่คนละ KV (`notes:{userId}`, `calendar:{userId}`), เว็บใช้ `me`, ห้ามปนกัน — นาดที่จดผ่าน web (ไม่มี userId) ไม่ถูกเตือนอัตโนมัติ
 - การ push ใช้ quota ของ LINE (ไทย ~500 ข้อความ/เดือน, ญี่ปุ่น/ไต้หวัน ~200/เดือน) — การ reply ระหว่างคุยไม่นับ
 - จำกัดการเตือน: ตัดรอบที่เลยเที่ยงคืนข้ามวันออก + ป้องกันซ้ำด้วย KV marker (`reminder:{id}:{offset}`, TTL 7 วัน)
+
+### สรุปวันนี้ (Daily brief)
+- **ฝั่งเว็บ**: กดปุ่ม "📋 สรุปวันนี้" → fetch `/api/notes` + `/api/calendar?date=วันนี้` ตรงจาก KV ไม่ผ่าน Gemini/WebSocket
+- **ฝั่ง LINE**: พิมพ์ "สรุปวันนี้" (หรือกด Quick Reply) → ตอบทันทีจาก KV
+- **อัตโนมัติ (push)**: ตั้ง `LINE_DAILY_BRIEF=08:00` → ทุกวัน 08:00 (ไทย) cron push สรุปให้ผู้ใช้ LINE ทุกคนที่เคยคุย (track ด้วย index `line:users`) 1 ครั้ง/คน/วัน (กันซ้ำด้วย `brief:{date}:{userId}`, TTL 2 วัน) — นับ push quota
 
 ### ถ้าหน้า LINE ตอบช้าหรือ error
 - เปิด `/api/line/health` ดูว่า `enabled / hasToken / hasSecret = true`
@@ -116,6 +123,7 @@ LINE bot จะทำงานเมื่อตั้งตัวแปร LINE
 - `LINE_ENABLED` — ปิด-เปิดโมดูล LINE ทั้งหมด (false = เว็บทำงานปกติ, LINE webhook ตอบ 404)
 - `LINE_MODEL` — เปลี่ยนโมเดลข้อความฝั่ง LINE
 - `LINE_REMINDERS_ENABLED` + `LINE_REMINDER_OFFSETS` — เปิด/ปรับการแจ้งเตือนนัดอัตโนมัติ (LINE push)
+- `LINE_DAILY_BRIEF` — เปิด/ปิดสรุปวันนี้แบบ push อัตโนมัติ (เวลาไทย HH:MM)
 - `SEARCH_ENGINE` + `SEARCH_API_KEY` *(optional)* — เปลี่ยนเครื่องมือค้นจาก Wikipedia เป็น `bing` / `tavily` (มี free tier: Bing 1,000/เดือน, Tavily 1,000 credits/เดือน ไม่ต้องบัตร)
 
 ---

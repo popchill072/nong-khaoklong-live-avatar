@@ -159,6 +159,16 @@ async function handleLineEvent(ev, env, services) {
     const text = String(ev.message.text || "").trim();
     if (!text) return;
 
+    await rememberLineUser(env, userId);
+
+    // Deterministic quick commands: reply straight from KV (no Gemini, no quota).
+    const quick = matchQuick(text);
+    if (quick) {
+      const out = await runQuick(quick, env, services, userId);
+      await replyMessages(env, replyToken, [{ type: "text", text: out.slice(0, 5000), quickReply: quickReplyPayload() }]);
+      return;
+    }
+
     const result = await runAIDialog(env, services, userId, text);
 
     const messages = [];
@@ -171,6 +181,112 @@ async function handleLineEvent(ev, env, services) {
     await replyMessages(env, replyToken, messages);
   } catch (e) {
     console.error("LINE event error", e?.message || e);
+  }
+}
+
+/* ---------------- Quick commands (deterministic, no Gemini) -------------- */
+
+const QUICK_MENU = [
+  { label: "📅 สรุปวันนี้", text: "สรุปวันนี้" },
+  { label: "🗓️ นัดวันนี้", text: "นัดวันนี้" },
+  { label: "📝 ดูโน้ต", text: "ดูโน้ต" },
+  { label: "❓ ช่วยเหลือ", text: "ช่วยเหลือ" },
+];
+
+function quickReplyPayload() {
+  return {
+    quickReply: {
+      items: QUICK_MENU.map((m) => ({
+        type: "action",
+        action: { type: "message", label: m.label, text: m.text },
+      })),
+    },
+  };
+}
+
+function matchQuick(text) {
+  const t = String(text || "").replace(/\s+/g, "").toLowerCase();
+  if (/^(สรุป|สรุปวันนี้|รายงานวันนี้|เดลิ)?วันนี้$/.test(t) && t.includes("สรุป")) return { cmd: "brief" };
+  if (/^สะรุป/.test(t) || t.startsWith("สรุป")) return { cmd: "brief" };
+  if (/^(นัด|นัดวันนี้|ตารางวันนี้|มีนัด)/.test(t)) return { cmd: "events" };
+  if (/^(โน้ต|ดูโน้ต|บันทึก|งานค้าง|จดไว้|สิ่งที่จำไว้)/.test(t)) return { cmd: "notes" };
+  if (/^(ช่วยเหลือ|วิธีใช้|คำสั่ง|เมนู|help)/.test(t)) return { cmd: "help" };
+  return null;
+}
+
+async function getOwnerEvents(env, services, userId, date) {
+  const u = `https://internal/api/calendar?key=${encodeURIComponent(userId)}` + (date ? `&date=${encodeURIComponent(date)}` : "");
+  const r = await services.handleCalendar(new Request(u), env);
+  const d = await r.json().catch(() => ({}));
+  return Array.isArray(d.events) ? d.events.filter(Boolean) : [];
+}
+
+async function getOwnerNotes(env, services, userId) {
+  const r = await services.handleNotes(new Request(`https://internal/api/notes?key=${encodeURIComponent(userId)}`), env);
+  const d = await r.json().catch(() => ({}));
+  return Array.isArray(d.notes) ? d.notes.filter(Boolean) : [];
+}
+
+// Daily brief — deterministic summary from KV (events today + notes), no AI.
+async function buildDailyBrief(env, services, userId) {
+  const now = bangkokNow();
+  const hour = Math.floor(now.minutes / 60);
+  const greet = hour < 12 ? "สวัสดีตอนเช้า" : hour < 17 ? "สวัสดีตอนบ่าย" : "สวัสดีตอนเย็น";
+  const events = await getOwnerEvents(env, services, userId, now.date);
+  const notes = await getOwnerNotes(env, services, userId);
+
+  let out = `🌤️ ${greet}ค่ะ ข้าวกล้องสรุปของวันนี้ (${now.date}) ให้พี่ดูนะคะ\n\n`;
+  out += `🗓️ นัดวันนี้ (${events.length} นัด):\n`;
+  out += events.length
+    ? events.map((e) => `• ${e.time || "—เวลา—"} | ${e.title}`).join("\n")
+    : "• ไม่มีนัดวันนี้ค่ะ\n";
+  out += `\n📝 โน้ต/สิ่งที่จำไว้ (${notes.length} รายการ):\n`;
+  out += notes.length
+    ? notes.slice(0, 10).map((n, i) => `${i + 1}. ${String(n.text || "").slice(0, 120)}`).join("\n")
+    : "• ยังไม่มีโน้ต — จดไว้ให้ข้าวกล้องช่วยจำได้นะคะ\n";
+  out += "\n💛 สู้ ๆ นะคะ พี่ทำได้!\n";
+  return out;
+}
+
+async function runQuick(q, env, services, userId) {
+  try {
+    if (q.cmd === "brief") return (await buildDailyBrief(env, services, userId)) + "\n(กดปุ่มด้านล่างเพื่อถามอย่างอื่นได้เลยค่ะ)";
+    if (q.cmd === "events") {
+      const now = bangkokNow();
+      const events = await getOwnerEvents(env, services, userId, now.date);
+      let s = `🗓️ นัดวันนี้ (${now.date}) — ${events.length} นัด\n`;
+      s += events.length ? events.map((e) => `• ${e.time || "—เวลา—"} | ${e.title}`).join("\n") : "• ไม่มีนัดวันนี้ค่ะ";
+      return s;
+    }
+    if (q.cmd === "notes") {
+      const notes = await getOwnerNotes(env, services, userId);
+      let s = `📝 โน้ตของคุณ (${notes.length} รายการ)\n`;
+      s += notes.length ? notes.slice(0, 15).map((n, i) => `${i + 1}. ${String(n.text || "").slice(0, 140)}`).join("\n") : "• ยังไม่มีโน้ต — พิมพ์ \"จดไว้ว่า...\" ให้ข้าวกล้องจำได้นะคะ";
+      return s;
+    }
+    return "✨ คำสั่งลัดของข้าวกล้อง ✨\n\n"
+      + "• \"สรุปวันนี้\" — สรุปนัด + โน้ตทั้งหมดวันนี้\n"
+      + "• \"นัดวันนี้\" — ดูนัดในวันนี้\n"
+      + "• \"ดูโน้ต\" — ดูสิ่งที่จดไว้\n"
+      + "• \"ช่วยเหลือ\" — เมนูนี้\n\n"
+      + "หรือพิมพ์ถามปกติก็ได้นะคะ (จดนัด/เตือน/ค้นหา/สร้างภาพ/จดโน้ต)";
+  } catch (e) {
+    return "ขอโทษค่ะ คอมห้ามันพลาดไปหน่อย ลองใหม่นะคะ (" + String(e?.message || e) + ")";
+  }
+}
+
+// Track users who ever talked so the optional daily-brief push knows whom to send to.
+async function rememberLineUser(env, userId) {
+  try {
+    if (!userId || userId === "unknown") return;
+    const raw = await env.MEMORY.get("line:users");
+    const list = raw ? JSON.parse(raw).filter(Boolean) : [];
+    if (!list.includes(userId)) {
+      list.push(userId);
+      await env.MEMORY.put("line:users", JSON.stringify(list.slice(-500)));
+    }
+  } catch (e) {
+    console.error("rememberLineUser", e?.message || e);
   }
 }
 
@@ -450,11 +566,30 @@ function bangkokNow() {
 // message. Each (event, offset) is marked in KV so it fires only once.
 export async function handleScheduled(env, services) {
   if (String(env.LINE_ENABLED).toLowerCase() !== "true") return;
-  if (String(env.LINE_REMINDERS_ENABLED).toLowerCase() === "false") return;
   if (!env.LINE_CHANNEL_ACCESS_TOKEN) return;
 
   const now = bangkokNow();
-  console.log(`LINE reminder cron ${now.date} ${Math.floor(now.minutes / 60)}:${String(now.minutes % 60).padStart(2, "0")}`);
+  console.log(`LINE cron ${now.date} ${Math.floor(now.minutes / 60)}:${String(now.minutes % 60).padStart(2, "0")}`);
+
+  // Optional daily brief push — opt-in via LINE_DAILY_BRIEF="HH:MM" (Bangkok).
+  // One push per user per day, deduped in KV. Runs independently of reminders.
+  const briefAt = String(env.LINE_DAILY_BRIEF || "").trim();
+  if (briefAt) {
+    const [bh, bm] = briefAt.split(":").map((n) => parseInt(n, 10));
+    if (!isNaN(bh) && !isNaN(bm) && now.minutes === bh * 60 + (bm || 0)) {
+      const rawUsers = await env.MEMORY.get("line:users").catch(() => null);
+      const users = rawUsers ? JSON.parse(rawUsers).filter(Boolean) : [];
+      for (const uid of users) {
+        const dedupe = "brief:" + now.date + ":" + uid;
+        if (await env.MEMORY.get(dedupe).catch(() => null)) continue;
+        const text = await buildDailyBrief(env, services, uid);
+        const ok = await pushMessage(env, uid, text);
+        if (ok) await env.MEMORY.put(dedupe, "1", { expirationTtl: 2 * 24 * 3600 });
+      }
+    }
+  }
+
+  if (String(env.LINE_REMINDERS_ENABLED).toLowerCase() === "false") return;
 
   // Reminder policy: one push per event today. Default fires at 60/10/0 min.
   // Env override e.g. "0" = only at the event time (economical). This keeps

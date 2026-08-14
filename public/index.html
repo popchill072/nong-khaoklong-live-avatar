@@ -916,6 +916,7 @@ summary {
 <section class="panel">
 <div class="title"><h2>คุยกับข้าวกล้อง 💬</h2><p>ใช้ Gemini Live (ฟรี) — พูดแทรกได้ หยุดได้ คุยต่อเนื่องได้</p></div>
 <div class="quick">
+<button onclick="sendText('สรุปวันนี้')">📋 สรุปวันนี้</button>
 <button onclick="sendText('ช่วยคิดคอนเทนต์ให้หน่อย')">💡 คิดคอนเทนต์</button>
 <button onclick="sendText('ช่วยวางแผนการตลาดให้หน่อย')">📈 การตลาด</button>
 <button onclick="sendText('ช่วยเขียนแคปชั่นขายสินค้า')">✍️ แคปชั่น</button>
@@ -1784,8 +1785,40 @@ $('micBtn').textContent=muted?'🔇':'🎙️';
 function sendText(t){
   t=(t||$('input').value).trim();if(!t)return;
   $('input').value='';add(t,'user');remember('user',t);
+  var q=quickRoute(t);
+  if(q){add('✨','ai');dailyBrief().then(function(s){$('messages').lastElementChild.textContent=s});return}
   if(!ws||ws.readyState!==WebSocket.OPEN){alert('กด “เริ่มคุย” ก่อนนะคะ');return}
   sendWs({realtimeInput:{text:t}});
+}
+function quickRoute(t){
+  t=String(t||'').replace(/\s+/g,'').toLowerCase();
+  if(/^(สรุป|สะรุป)/.test(t))return 'brief';
+  if(/^(นัด|นัดวันนี้|ตารางวันนี้|มีนัด)/.test(t))return 'events';
+  if(/^(โน้ต|ดูโน้ต|บันทึก|งานค้าง|จดไว้)/.test(t))return 'notes';
+  if(/^(ช่วยเหลือ|วิธีใช้|คำสั่ง|เมนู|help)/.test(t))return 'help';
+  return null;
+}
+function bkkToday(){
+  var p=new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit',timeZone:'Asia/Bangkok'}).formatToParts(new Date());
+  var g=function(t){return (p.find(function(x){return x.type===t})||{}).value||''};
+  return g('year')+'-'+g('month')+'-'+g('day');
+}
+function dailyBrief(){
+  return Promise.all([
+    fetch('/api/notes').then(function(r){return r.json().catch(function(){return {}})}),
+    fetch('/api/calendar?date='+bkkToday()).then(function(r){return r.json().catch(function(){return {}})}),
+  ]).then(function(res){
+    var notes=res[0].notes||[],evs=res[1].events||[];
+    var h=new Date().getHours();
+    var greet=h<12?'สวัสดีตอนเช้า':h<17?'สวัสดีตอนบ่าย':'สวัสดีตอนเย็น';
+    var s='🌤️ '+greet+'ค่ะ ข้าวกล้องสรุปของวันนี้ ('+bkkToday()+') ให้พี่ดูนะคะ\n\n';
+    s+='🗓️ นัดวันนี้ ('+evs.length+' นัด):\n';
+    s+=evs.length?evs.map(function(e){return '• '+(e.time||'—เวลา—')+' | '+e.title}).join('\n'):'• ไม่มีนัดวันนี้ค่ะ\n';
+    s+='\n📝 โน้ต/สิ่งที่จำไว้ ('+notes.length+' รายการ):\n';
+    s+=notes.length?notes.slice(0,10).map(function(n,i){return (i+1)+'. '+String(n.text||'').slice(0,120)}).join('\n'):'• ยังไม่มีโน้ต — จดไว้ให้ข้าวกล้องช่วยจำได้นะคะ\n';
+    s+='\n💛 สู้ ๆ นะคะ พี่ทำได้!';
+    return s;
+  });
 }
 add('สวัสดีค่ะ 💗 ข้าวกล้องพร้อมแล้วนะคะ กด “เริ่มคุย” แล้วลองพูดกับข้าวกล้องได้เลยค่ะ','ai');
 </script>
