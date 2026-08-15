@@ -917,6 +917,8 @@ summary {
 <div class="title"><h2>คุยกับข้าวกล้อง 💬</h2><p>ใช้ Gemini Live (ฟรี) — พูดแทรกได้ หยุดได้ คุยต่อเนื่องได้</p></div>
 <div class="quick">
 <button onclick="sendText('สรุปวันนี้')">📋 สรุปวันนี้</button>
+<button onclick="sendText('งานค้าง')">✅ งานค้าง</button>
+<button onclick="sendText('ใช้เงินวันนี้')">💰 ใช้เงินวันนี้</button>
 <button onclick="sendText('ช่วยคิดคอนเทนต์ให้หน่อย')">💡 คิดคอนเทนต์</button>
 <button onclick="sendText('ช่วยวางแผนการตลาดให้หน่อย')">📈 การตลาด</button>
 <button onclick="sendText('ช่วยเขียนแคปชั่นขายสินค้า')">✍️ แคปชั่น</button>
@@ -1392,6 +1394,71 @@ function setupSession(){
             required:[]
           }
         },{
+          name:"add_expense",
+          description:"Record an expense or income to the owner's ledger. Call whenever the user mentions spending or receiving money, e.g. ซื้อของไป 500, จ่ายค่าโทรศัพท์, ได้เงินเดือน. Expense = negative amount, income = positive.",
+          parameters:{
+            type:"OBJECT",
+            properties:{
+              amount:{type:"NUMBER",description:"Signed number. Expense negative (e.g. -500), income positive (e.g. 15000)."},
+              category:{type:"STRING",description:"Optional short Thai category: อาหาร, เดินทาง, บิล, งานอดิเรก ฯลฯ"},
+              note:{type:"STRING",description:"Optional short Thai description."},
+              date:{type:"STRING",description:"Optional YYYY-MM-DD (Gregorian). Default today."}
+            },
+            required:["amount"]
+          }
+        },{
+          name:"get_expenses",
+          description:"Retrieve the owner's expense/income ledger, optionally filtered to one date. Call when the user asks about their spending/income/ยอดใช้จ่าย/รายรับรายจ่าย/ใช้เงินเท่าไหร่.",
+          parameters:{
+            type:"OBJECT",
+            properties:{
+              date:{type:"STRING",description:"Optional YYYY-MM-DD to filter to a single day (Gregorian)."}
+            },
+            required:[]
+          }
+        },{
+          name:"add_todo",
+          description:"Add a to-do task to the owner's task list. Call when the user asks to put something on their to-do list / งานที่ต้องทำ / รายการที่ต้องทำ / เตือนให้ทำ.",
+          parameters:{
+            type:"OBJECT",
+            properties:{
+              text:{type:"STRING",description:"Short Thai description of the task."}
+            },
+            required:["text"]
+          }
+        },{
+          name:"list_todos",
+          description:"List the owner's to-do tasks (undone first). Call when the user asks what tasks they have, งานค้าง, รายการที่ต้องทำ, ต้องทำอะไรบ้าง, or what's left to do.",
+          parameters:{type:"OBJECT",properties:{},required:[]}
+        },{
+          name:"toggle_todo",
+          description:"Mark a to-do task done/undone. Call when the user says a task is finished/เสร็จแล้ว/ทำแล้ว ทำเสร็จ — pass the exact task text from list_todos. If unclear, ask which task.",
+          parameters:{
+            type:"OBJECT",
+            properties:{text:{type:"STRING",description:"Exact text of the task to toggle."}},
+            required:["text"]
+          }
+        },{
+          name:"add_shopping",
+          description:"Add an item to the owner's shopping list. Call when the user asks to put something on their shopping list / รายการซื้อของ / ต้องซื้อของ / ไปซื้อของ.",
+          parameters:{
+            type:"OBJECT",
+            properties:{text:{type:"STRING",description:"Short Thai name of the item to buy."}},
+            required:["text"]
+          }
+        },{
+          name:"list_shopping",
+          description:"List the owner's shopping list (undone first). Call when the user asks what's on their shopping list / ต้องซื้ออะไร / ของที่จะซื้อ.",
+          parameters:{type:"OBJECT",properties:{},required:[]}
+        },{
+          name:"toggle_shopping",
+          description:"Mark a shopping item bought/unbought. Call when the user says they bought an item / ซื้อแล้ว / หามาแล้ว — pass the exact item text from list_shopping. If unclear, ask which item.",
+          parameters:{
+            type:"OBJECT",
+            properties:{text:{type:"STRING",description:"Exact text of the shopping item to toggle."}},
+            required:["text"]
+          }
+        },{
           name:"set_emotion",
           description:"Set the avatar's facial expression/emotion by switching to a matching emotion video. Call this when the user requests an emotion or when the conversation mood calls for one. Emotions: neutral, happy, sad, excited, surprised, thinking, love, angry, sleepy, embarrassed, bye (wave goodbye when the user says farewell like ไปแล้วนะ/เดี๋ยวไปก่อน/บ๊ายบาย). Each plays its own short looping clip; the avatar returns to talk/listen video automatically as the conversation continues.",
           parameters:{
@@ -1434,6 +1501,14 @@ async function onWsMessage(ev){
       else if(fc.name==='get_notes')handleGetNotesTool(fc);
       else if(fc.name==='add_event')handleAddEventTool(fc);
       else if(fc.name==='get_events')handleGetEventsTool(fc);
+      else if(fc.name==='add_expense')handleAddExpenseTool(fc);
+      else if(fc.name==='get_expenses')handleGetExpensesTool(fc);
+      else if(fc.name==='add_todo')handleAddTodoTool(fc);
+      else if(fc.name==='list_todos')handleListTodosTool(fc);
+      else if(fc.name==='toggle_todo')handleToggleTodoTool(fc);
+      else if(fc.name==='add_shopping')handleAddShoppingTool(fc);
+      else if(fc.name==='list_shopping')handleListShoppingTool(fc);
+      else if(fc.name==='toggle_shopping')handleToggleShoppingTool(fc);
     }
     return;
   }
@@ -1618,6 +1693,107 @@ async function handleGetEventsTool(fc){
     sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
   }
 }
+async function handleAddExpenseTool(fc){
+  const amount=Number(fc.args&&fc.args.amount);
+  if(!isFinite(amount)||amount===0){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:'invalid amount, need non-zero number'}}]}});return}
+  try{
+    const r=await fetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount,category:(fc.args&&fc.args.category)||'',note:(fc.args&&fc.args.note)||'',date:(fc.args&&fc.args.date)||''})});
+    const d=await r.json();
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{ok:!!d.ok,saved:amount,category:(fc.args&&fc.args.category)||'',text:'บันทึกรายการแล้ว'}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleGetExpensesTool(fc){
+  const date=String(fc.args&&fc.args.date||'').trim();
+  try{
+    const q='/api/expenses'+((date)?('?date='+encodeURIComponent(date)):'');
+    const r=await fetch(q);
+    const d=await r.json();
+    const items=d.items||[];
+    const total=items.reduce(function(s,i){return s+(Number(i.amount)||0)},0);
+    const text=items.length?items.slice(0,30).map(function(i){return i.date+' '+(i.amount>0?'+':'')+i.amount+(i.category?' ['+i.category+']':'')+(i.note?' '+i.note:'')}).join('\n'):'(ยังไม่มีรายการ)'+(date?' เมื่อ '+date:'');
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{count:items.length,total:total,entries_text:text}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleAddTodoTool(fc){
+  const text=String(fc.args&&fc.args.text||'').trim();
+  if(!text){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:'missing text'}}]}});return}
+  try{
+    const r=await fetch('/api/todos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    const d=await r.json();
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{ok:!!d.ok,count:(d.items||[]).length,text:'เพิ่มงานแล้ว'}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleListTodosTool(fc){
+  try{
+    const r=await fetch('/api/todos');
+    const d=await r.json();
+    const items=d.items||[];
+    const undone=items.filter(function(i){return !i.done}).map(function(i,n){return (n+1)+'. '+i.text}).join('\n');
+    const doneCount=items.filter(function(i){return i.done}).length;
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{count:items.length,done:doneCount,undone_text:undone||'(ไม่มีงานค้าง — ว่าง ๆ ดีใจด้วยนะคะ)'}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleToggleTodoTool(fc){
+  const text=String(fc.args&&fc.args.text||'').trim();
+  if(!text){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:'missing text'}}]}});return}
+  try{
+    const r0=await fetch('/api/todos');
+    const d0=await r0.json();
+    const match=(d0.items||[]).find(function(i){return i.text===text})||(d0.items||[]).find(function(i){return String(i.text).indexOf(text)>=0});
+    if(!match){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:'ไม่เจองานในรายการ: '+text}}]}});return}
+    const r=await fetch('/api/todos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({toggle:match.id})});
+    const d=await r.json();
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{ok:!!d.ok,text:text,done:!!d.done,result:'งาน "'+text+'" '+(d.done?'เสร็จแล้วค่ะ 🎉':'กลับมาเป็นยังไม่เสร็จ')}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleAddShoppingTool(fc){
+  const text=String(fc.args&&fc.args.text||'').trim();
+  if(!text){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:'missing text'}}]}});return}
+  try{
+    const r=await fetch('/api/shopping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    const d=await r.json();
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{ok:!!d.ok,count:(d.items||[]).length,text:'เพิ่มในรายการซื้อของแล้ว'}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleListShoppingTool(fc){
+  try{
+    const r=await fetch('/api/shopping');
+    const d=await r.json();
+    const items=d.items||[];
+    const undone=items.filter(function(i){return !i.done}).map(function(i,n){return (n+1)+'. '+i.text}).join('\n');
+    const bought=items.filter(function(i){return i.done}).length;
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{count:items.length,bought:bought,undone_text:undone||'(ไม่มีของค้างซื้อ)'}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleToggleShoppingTool(fc){
+  const text=String(fc.args&&fc.args.text||'').trim();
+  if(!text){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:'missing text'}}]}});return}
+  try{
+    const r0=await fetch('/api/shopping');
+    const d0=await r0.json();
+    const match=(d0.items||[]).find(function(i){return i.text===text})||(d0.items||[]).find(function(i){return String(i.text).indexOf(text)>=0});
+    if(!match){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:'ไม่เจอของในรายการ: '+text}}]}});return}
+    const r=await fetch('/api/shopping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({toggle:match.id})});
+    const d=await r.json();
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{ok:!!d.ok,text:text,done:!!d.done,result:'ของ "'+text+'" '+(d.done?'ซื้อแล้ว ✅':'กลับมาเป็นยังไม่ซื้อ')}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
 function sendToolResult(id,args){
   sendWs({toolResponse:{functionResponses:[{id,response:{result:"ok",args}}]}});
 }
@@ -1786,7 +1962,7 @@ function sendText(t){
   t=(t||$('input').value).trim();if(!t)return;
   $('input').value='';add(t,'user');remember('user',t);
   var q=quickRoute(t);
-  if(q){add('✨','ai');dailyBrief().then(function(s){$('messages').lastElementChild.textContent=s});return}
+  if(q){add('✨','ai');quickAnswer(q).then(function(s){$('messages').lastElementChild.textContent=s});return}
   if(!ws||ws.readyState!==WebSocket.OPEN){alert('กด “เริ่มคุย” ก่อนนะคะ');return}
   sendWs({realtimeInput:{text:t}});
 }
@@ -1794,9 +1970,57 @@ function quickRoute(t){
   t=String(t||'').replace(/\s+/g,'').toLowerCase();
   if(/^(สรุป|สะรุป)/.test(t))return 'brief';
   if(/^(นัด|นัดวันนี้|ตารางวันนี้|มีนัด)/.test(t))return 'events';
-  if(/^(โน้ต|ดูโน้ต|บันทึก|งานค้าง|จดไว้)/.test(t))return 'notes';
+  if(/^(โน้ต|ดูโน้ต|บันทึก|จดไว้)/.test(t))return 'notes';
+  if(/^(งานค้าง|ทำอะไรค้าง|รายการที่ต้องทำ)$/.test(t)||t.indexOf('งานค้าง')>=0)return 'todos';
+  if(/^(ซื้อของ|ของค้าง|ต้องซื้อ|รายการซื้อ|ช้อปปิ้ง|shopping|ของที่ต้องซื้อ)/.test(t))return 'shopping';
+  if(/^(ใช้เงิน|ใช้เงินวันนี้|รายจ่าย|ค่าใช้จ่าย|ใช้จ่าย|รายรับ|expense)/.test(t))return 'expenses';
   if(/^(ช่วยเหลือ|วิธีใช้|คำสั่ง|เมนู|help)/.test(t))return 'help';
   return null;
+}
+function quickAnswer(q){
+  if(q==='brief')return dailyBrief();
+  if(q==='events'){
+    return fetch('/api/calendar?date='+bkkToday()).then(function(r){return r.json().catch(function(){return {}})}).then(function(d){
+      var evs=d.events||[];var s='🗓️ นัดวันนี้ ('+bkkToday()+') — '+evs.length+' นัด\n';
+      return s+(evs.length?evs.map(function(e){return '• '+(e.time||'—เวลา—')+' | '+e.title}).join('\n'):'• ไม่มีนัดวันนี้ค่ะ');
+    });
+  }
+  if(q==='notes'){
+    return fetch('/api/notes').then(function(r){return r.json().catch(function(){return {}})}).then(function(d){
+      var ns=d.notes||[];var s='📝 โน้ตของคุณ ('+ns.length+' รายการ)\n';
+      return s+(ns.length?ns.slice(0,15).map(function(n,i){return (i+1)+'. '+String(n.text||'').slice(0,140)}).join('\n'):'• ยังไม่มีโน้ต — พิมพ์ "จดไว้ว่า..." ให้ข้าวกล้องจำได้นะคะ');
+    });
+  }
+  if(q==='todos'){
+    return fetch('/api/todos').then(function(r){return r.json().catch(function(){return {}})}).then(function(d){
+      var its=(d.items||[]).filter(function(i){return !i.done});var s='✅ งานของคุณ ('+(d.items||[]).length+' รายการ — ค้าง '+its.length+')\n';
+      return s+(its.length?its.map(function(i){return '• '+String(i.text||'').slice(0,140)}).join('\n'):'• ไม่มีงานค้าง ว่าง ๆ ดีใจด้วยค่ะ 🎉');
+    });
+  }
+  if(q==='shopping'){
+    return fetch('/api/shopping').then(function(r){return r.json().catch(function(){return {}})}).then(function(d){
+      var its=(d.items||[]).filter(function(i){return !i.done});var s='🛒 รายการซื้อของ ('+(d.items||[]).length+' — ยังต้องซื้อ '+its.length+')\n';
+      return s+(its.length?its.map(function(i){return '• '+String(i.text||'').slice(0,140)}).join('\n'):'• ไม่มีของค้างซื้อแล้ว 🛍️');
+    });
+  }
+  if(q==='expenses'){
+    return fetch('/api/expenses?date='+bkkToday()).then(function(r){return r.json().catch(function(){return {}})}).then(function(d){
+      var its=d.items||[];var inc=0,spd=0;
+      its.forEach(function(i){var a=Number(i.amount)||0;if(a>0)inc+=a;else spd+=-a});
+      var net=inc-spd;
+      var s='💰 ยอดของวันนี้ ('+bkkToday()+')\n• รายรับ +'+inc.toLocaleString('th-TH')+' บาท\n• รายจ่าย -'+spd.toLocaleString('th-TH')+' บาท\n• สุทธิ '+(net>=0?'+':'−')+Math.abs(net).toLocaleString('th-TH')+' บาท\n';
+      return s+(its.length?'\nรายการ:\n'+its.map(function(i){return '• '+(Number(i.amount)>0?'+':'−')+Math.abs(Number(i.amount)).toLocaleString('th-TH')+(i.category?' ['+i.category+']':'')+(i.note?' '+i.note:'')}).join('\n'):'\n(ยังไม่มีรายการวันนี้ ลองพิมพ์ "ซื้อกาแฟไป 120" ให้ข้าวกล้องจดให้ได้นะคะ)');
+    });
+  }
+  return Promise.resolve("✨ คำสั่งลัดของข้าวกล้อง ✨\n\n"
+    +"• \"สรุปวันนี้\" — สรุปนัด + โน้ตทั้งหมดวันนี้\n"
+    +"• \"นัดวันนี้\" — ดูนัดในวันนี้\n"
+    +"• \"ดูโน้ต\" — ดูสิ่งที่จดไว้\n"
+    +"• \"งานค้าง\" — ดู to-do ที่ยังไม่เสร็จ\n"
+    +"• \"ซื้อของ\" — ดูรายการซื้อของ\n"
+    +"• \"ใช้เงินวันนี้\" — ดูยอดใช้จ่าย/รายรับวันนี้\n"
+    +"• \"ช่วยเหลือ\" — เมนูนี้\n\n"
+    +"หรือพิมพ์ถามปกติก็ได้นะคะ (จดนัด/เตือน/ค้นหา/สร้างภาพ/จดโน้ต/จดรายจ่าย/เพิ่มงาน)");
 }
 function bkkToday(){
   var p=new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit',timeZone:'Asia/Bangkok'}).formatToParts(new Date());

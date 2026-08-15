@@ -91,6 +91,75 @@ const TOOL_DECLARATIONS = [
       required: ["prompt"],
     },
   },
+  {
+    name: "add_expense",
+    description: "Record an expense or income to the owner's ledger. Call when the user says they spent/received money, e.g. ซื้อของไป 500, จ่ายค่าโทรศัพท์, ได้เงินเดือน. Income is a positive amount, expense a negative amount (or specify expense with positive amount and category).",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        amount: { type: "NUMBER", description: "Signed number of the money change. Expense = negative (e.g. -500), income = positive (e.g. 15000)." },
+        category: { type: "STRING", description: "Optional short Thai category, e.g. อาหาร, เดินทาง, บิล, งานอดิเรก." },
+        note: { type: "STRING", description: "Optional short Thai description." },
+        date: { type: "STRING", description: "Optional YYYY-MM-DD (Gregorian). Default today." },
+      },
+      required: ["amount"],
+    },
+  },
+  {
+    name: "get_expenses",
+    description: "Retrieve the owner's expense/income ledger, optionally filtered to one date. Returns items newest first with total. Call when the user asks about their expenses, income, spending, ยอดใช้จ่าย, รายรับรายจ่าย.",
+    parameters: {
+      type: "OBJECT",
+      properties: { date: { type: "STRING", description: "Optional YYYY-MM-DD to filter to a single day (Gregorian)." } },
+      required: [],
+    },
+  },
+  {
+    name: "add_todo",
+    description: "Add a to-do task to the owner's task list. Call when the user asks to put something on their to-do / task list / งานที่ต้องทำ / รายการที่ต้องทำ.", 
+    parameters: {
+      type: "OBJECT",
+      properties: { text: { type: "STRING", description: "Short Thai description of the task." } },
+      required: ["text"],
+    },
+  },
+  {
+    name: "list_todos",
+    description: "List the owner's to-do tasks (undone first). Call when the user asks what tasks/todos they have, งานค้าง, รายการที่ต้องทำ, ต้องทำอะไรบ้าง.",
+    parameters: { type: "OBJECT", properties: {}, required: [] },
+  },
+  {
+    name: "toggle_todo",
+    description: "Mark a to-do task done/undone. Call when the user says a task is finished/เสร็จแล้ว/ทำแล้ว/เลิกทำ — match by its text, pass the exact todo text. If unclear ask which task.",
+    parameters: {
+      type: "OBJECT",
+      properties: { text: { type: "STRING", description: "Exact text of the task to toggle, as returned by list_todos." } },
+      required: ["text"],
+    },
+  },
+  {
+    name: "add_shopping",
+    description: "Add an item to the owner's shopping list. Call when the user asks to put something on their shopping list / รายการซื้อของ / ต้องซื้อของ / ไปซื้อ.",
+    parameters: {
+      type: "OBJECT",
+      properties: { text: { type: "STRING", description: "Short Thai name of the item to buy." } },
+      required: ["text"],
+    },
+  },
+  {
+    name: "list_shopping",
+    description: "List the owner's shopping list (undone first). Call when the user asks what's on their shopping list / ต้องซื้ออะไร / ของที่จะซื้อ.",
+    parameters: { type: "OBJECT", properties: {}, required: [] },
+  },
+  {
+    name: "toggle_shopping",
+    description: "Mark a shopping item bought/unbought. Call when the user says they bought an item / ซื้อแล้ว / หามาแล้ว — match by text, pass the exact item text. If unclear ask which item.",
+    parameters: {
+      type: "OBJECT",
+      properties: { text: { type: "STRING", description: "Exact text of the shopping item to toggle, as returned by list_shopping." } },
+      required: ["text"],
+    },
+  },
 ];
 
 // Verify the x-line-signature header of the raw webhook body.
@@ -190,6 +259,9 @@ const QUICK_MENU = [
   { label: "📅 สรุปวันนี้", text: "สรุปวันนี้" },
   { label: "🗓️ นัดวันนี้", text: "นัดวันนี้" },
   { label: "📝 ดูโน้ต", text: "ดูโน้ต" },
+  { label: "✅ งานค้าง", text: "งานค้าง" },
+  { label: "🛒 ของค้างซื้อ", text: "ซื้อของ" },
+  { label: "💰 ใช้เงินวันนี้", text: "ใช้เงินวันนี้" },
   { label: "❓ ช่วยเหลือ", text: "ช่วยเหลือ" },
 ];
 
@@ -209,7 +281,10 @@ function matchQuick(text) {
   if (/^(สรุป|สรุปวันนี้|รายงานวันนี้|เดลิ)?วันนี้$/.test(t) && t.includes("สรุป")) return { cmd: "brief" };
   if (/^สะรุป/.test(t) || t.startsWith("สรุป")) return { cmd: "brief" };
   if (/^(นัด|นัดวันนี้|ตารางวันนี้|มีนัด)/.test(t)) return { cmd: "events" };
-  if (/^(โน้ต|ดูโน้ต|บันทึก|งานค้าง|จดไว้|สิ่งที่จำไว้)/.test(t)) return { cmd: "notes" };
+  if (/^(โน้ต|ดูโน้ต|บันทึก|จดไว้|สิ่งที่จำไว้)/.test(t)) return { cmd: "notes" };
+  if (/^(งานค้าง|ทำอะไรค้าง|รายการที่ต้องทำ)$/.test(t) || t.includes("งานค้าง")) return { cmd: "todos" };
+  if (/^(ซื้อของ|ของค้าง|ต้องซื้อ|รายการซื้อ|ช้อปปิ้ง|shopping|ของที่ต้องซื้อ)/.test(t)) return { cmd: "shopping" };
+  if (/^(ใช้เงิน|ใช้เงินวันนี้|รายจ่าย|ค่าใช้จ่าย|ใช้จ่าย|รายรับ|expense)/.test(t)) return { cmd: "expenses" };
   if (/^(ช่วยเหลือ|วิธีใช้|คำสั่ง|เมนู|help)/.test(t)) return { cmd: "help" };
   return null;
 }
@@ -264,15 +339,54 @@ async function runQuick(q, env, services, userId) {
       s += notes.length ? notes.slice(0, 15).map((n, i) => `${i + 1}. ${String(n.text || "").slice(0, 140)}`).join("\n") : "• ยังไม่มีโน้ต — พิมพ์ \"จดไว้ว่า...\" ให้ข้าวกล้องจำได้นะคะ";
       return s;
     }
+    if (q.cmd === "todos") return await quickTodos(env, services, userId);
+    if (q.cmd === "shopping") return await quickShopping(env, services, userId);
+    if (q.cmd === "expenses") return await quickExpenses(env, services, userId);
     return "✨ คำสั่งลัดของข้าวกล้อง ✨\n\n"
       + "• \"สรุปวันนี้\" — สรุปนัด + โน้ตทั้งหมดวันนี้\n"
       + "• \"นัดวันนี้\" — ดูนัดในวันนี้\n"
       + "• \"ดูโน้ต\" — ดูสิ่งที่จดไว้\n"
+      + "• \"งานค้าง\" — ดู to-do ที่ยังไม่เสร็จ\n"
+      + "• \"ซื้อของ\" — ดูรายการซื้อของ\n"
+      + "• \"ใช้เงินวันนี้\" — ดูยอดใช้จ่าย/รายรับวันนี้\n"
       + "• \"ช่วยเหลือ\" — เมนูนี้\n\n"
-      + "หรือพิมพ์ถามปกติก็ได้นะคะ (จดนัด/เตือน/ค้นหา/สร้างภาพ/จดโน้ต)";
+      + "หรือพิมพ์ถามปกติก็ได้นะคะ (จดนัด/เตือน/ค้นหา/สร้างภาพ/จดโน้ต/จดรายจ่าย/เพิ่มงาน)";
   } catch (e) {
     return "ขอโทษค่ะ คอมห้ามันพลาดไปหน่อย ลองใหม่นะคะ (" + String(e?.message || e) + ")";
   }
+}
+
+async function quickTodos(env, services, userId) {
+  const r = await services.handleTodos(new Request("https://internal/api/todos?key=" + encodeURIComponent(userId)), env);
+  const d = await r.json().catch(() => ({}));
+  const items = d.items || [];
+  const undone = items.filter((i) => !i.done);
+  let s = `✅ งานของคุณ (${items.length} รายการ — ค้าง ${undone.length})\n`;
+  s += undone.length ? undone.map((i) => `• ${String(i.text || "").slice(0, 140)}`).join("\n") : "• ไม่มีงานค้าง ว่าง ๆ ดีใจด้วยค่ะ 🎉";
+  return s;
+}
+
+async function quickShopping(env, services, userId) {
+  const r = await services.handleShopping(new Request("https://internal/api/shopping?key=" + encodeURIComponent(userId)), env);
+  const d = await r.json().catch(() => ({}));
+  const items = d.items || [];
+  const undone = items.filter((i) => !i.done);
+  let s = `🛒 รายการซื้อของ (${items.length} — ยังต้องซื้อ ${undone.length})\n`;
+  s += undone.length ? undone.map((i) => `• ${String(i.text || "").slice(0, 140)}`).join("\n") : "• ไม่มีของค้างซื้อแล้ว 🛍️";
+  return s;
+}
+
+async function quickExpenses(env, services, userId) {
+  const now = bangkokNow();
+  const r = await services.handleExpenses(new Request("https://internal/api/expenses?key=" + encodeURIComponent(userId) + "&date=" + now.date), env);
+  const d = await r.json().catch(() => ({}));
+  const items = d.items || [];
+  const total = (Number(d.total) || 0);
+  const income = items.filter((i) => (Number(i.amount) || 0) > 0).reduce((s, i) => s + Number(i.amount), 0);
+  const spend = items.filter((i) => (Number(i.amount) || 0) < 0).reduce((s, i) => s - Number(i.amount), 0);
+  let s = `💰 ยอดของวันนี้ (${now.date})\n• รายรับ +${income.toLocaleString("th-TH")} บาท\n• รายจ่าย -${spend.toLocaleString("th-TH")} บาท\n• สุทธิ ${(income - spend) >= 0 ? "+" : ""}${(income - spend).toLocaleString("th-TH")} บาท\n`;
+  s += items.length ? "\nรายการ:\n" + items.map((i) => `• ${i.amount > 0 ? "+" : "−"}${Math.abs(Number(i.amount)).toLocaleString("th-TH")}${i.category ? " [" + i.category + "]" : ""}${i.note ? " " + i.note : ""}`).join("\n") : "\n(ยังไม่มีรายการวันนี้ ลองพิมพ์ \"ซื้อกาแฟไป 120\" ให้ข้าวกล้องจดให้ได้นะคะ)";
+  return s;
 }
 
 // Track users who ever talked so the optional daily-brief push knows whom to send to.
@@ -471,6 +585,89 @@ async function runTool(name, args, env, services, baseUrl, userId) {
           return { response: { result: "สร้างภาพแล้ว กำลังส่งให้ผู้ใช้" }, image: { id } };
         }
         return { response: { result: `image failed: ${d?.error || "quota/error"}. บอกผู้ใช้ว่าสร้างภาพไม่ได้ตอนนี้` } };
+      }
+      case "add_expense": {
+        const amount = Number(args.amount);
+        if (!isFinite(amount) || amount === 0) return { response: { error: "invalid amount" } };
+        const r = await services.handleExpenses(new Request("https://internal/api/expenses?key=" + encodeURIComponent(userId), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ amount, category: args.category || "", note: args.note || "", date: args.date || "" }),
+        }), env);
+        const d = await r.json().catch(() => ({}));
+        if (!d.ok) return { response: { error: d?.error || "add failed" } };
+        return { response: { ok: true, saved: amount, category: args.category || "", date: args.date || "today", text: "บันทึกรายการแล้ว" } };
+      }
+      case "get_expenses": {
+        const date = String(args.date || "").trim();
+        const q = "https://internal/api/expenses?key=" + encodeURIComponent(userId) + (date ? "&date=" + encodeURIComponent(date) : "");
+        const r = await services.handleExpenses(new Request(q), env);
+        const d = await r.json().catch(() => ({}));
+        const items = d.items || [];
+        const total = items.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+        const text = items.length
+          ? items.slice(0, 30).map((i) => `${i.date} ${i.amount > 0 ? "+" : ""}${i.amount}${i.category ? " [" + i.category + "]" : ""}${i.note ? " " + i.note : ""}`).join("\n")
+          : "(ยังไม่มีรายการ)" + (date ? ` เมื่อ ${date}` : "");
+        return { response: { count: items.length, total, entries_text: text } };
+      }
+      case "add_todo": {
+        const text = String(args.text || "").trim();
+        if (!text) return { response: { error: "missing text" } };
+        const r = await services.handleTodos(new Request("https://internal/api/todos?key=" + encodeURIComponent(userId), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
+        }), env);
+        const d = await r.json().catch(() => ({}));
+        return { response: { ok: !!d.ok, count: (d.items || []).length, text: "เพิ่มงานแล้ว" } };
+      }
+      case "list_todos": {
+        const r = await services.handleTodos(new Request("https://internal/api/todos?key=" + encodeURIComponent(userId)), env);
+        const d = await r.json().catch(() => ({}));
+        const items = d.items || [];
+        const undone = items.filter((i) => !i.done).map((i, n) => `${n + 1}. ${i.text}`).join("\n");
+        const doneCount = items.filter((i) => i.done).length;
+        return { response: { count: items.length, done: doneCount, undone_text: undone || "(ไม่มีงานค้าง — ว่าง ๆ ดีใจด้วยนะคะ)" } };
+      }
+      case "toggle_todo": {
+        const text = String(args.text || "").trim();
+        if (!text) return { response: { error: "missing text" } };
+        const r0 = await services.handleTodos(new Request("https://internal/api/todos?key=" + encodeURIComponent(userId)), env);
+        const d0 = await r0.json().catch(() => ({}));
+        const match = (d0.items || []).find((i) => i.text === text) || (d0.items || []).find((i) => String(i.text).includes(text));
+        if (!match) return { response: { error: "ไม่เจองานในรายการ: " + text } };
+        const r = await services.handleTodos(new Request("https://internal/api/todos?key=" + encodeURIComponent(userId), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ toggle: match.id }),
+        }), env);
+        const d = await r.json().catch(() => ({}));
+        return { response: { ok: !!d.ok, text, done: !!d.done, result: `งาน "${text}" ${d.done ? "เสร็จแล้วค่ะ 🎉" : "กลับมาเป็นยังไม่เสร็จ"}` } };
+      }
+      case "add_shopping": {
+        const text = String(args.text || "").trim();
+        if (!text) return { response: { error: "missing text" } };
+        const r = await services.handleShopping(new Request("https://internal/api/shopping?key=" + encodeURIComponent(userId), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
+        }), env);
+        const d = await r.json().catch(() => ({}));
+        return { response: { ok: !!d.ok, count: (d.items || []).length, text: "เพิ่มในรายการซื้อของแล้ว" } };
+      }
+      case "list_shopping": {
+        const r = await services.handleShopping(new Request("https://internal/api/shopping?key=" + encodeURIComponent(userId)), env);
+        const d = await r.json().catch(() => ({}));
+        const items = d.items || [];
+        const undone = items.filter((i) => !i.done).map((i, n) => `${n + 1}. ${i.text}`).join("\n");
+        const doneCount = items.filter((i) => i.done).length;
+        return { response: { count: items.length, bought: doneCount, undone_text: undone || "(ไม่มีของค้างซื้อ)" } };
+      }
+      case "toggle_shopping": {
+        const text = String(args.text || "").trim();
+        if (!text) return { response: { error: "missing text" } };
+        const r0 = await services.handleShopping(new Request("https://internal/api/shopping?key=" + encodeURIComponent(userId)), env);
+        const d0 = await r0.json().catch(() => ({}));
+        const match = (d0.items || []).find((i) => i.text === text) || (d0.items || []).find((i) => String(i.text).includes(text));
+        if (!match) return { response: { error: "ไม่เจอของในรายการ: " + text } };
+        const r = await services.handleShopping(new Request("https://internal/api/shopping?key=" + encodeURIComponent(userId), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ toggle: match.id }),
+        }), env);
+        const d = await r.json().catch(() => ({}));
+        return { response: { ok: !!d.ok, text, done: !!d.done, result: `ของ "${text}" ${d.done ? "ซื้อแล้ว ✅" : "กลับมาเป็นยังไม่ซื้อ"}` } };
       }
       default:
         return { response: { error: "unknown tool: " + name } };

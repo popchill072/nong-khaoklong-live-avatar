@@ -17,6 +17,9 @@ const lineServices = {
   handleNow,
   handleNotes,
   handleCalendar,
+  handleExpenses,
+  handleTodos,
+  handleShopping,
   generateImage,
 };
 
@@ -57,6 +60,21 @@ export default {
     // Calendar (appointments): GET /api/calendar  POST /api/calendar  DELETE /api/calendar
     if (url.pathname === "/api/calendar") {
       return handleCalendar(request, env);
+    }
+
+    // Expenses (income/expense ledger): GET /api/expenses  POST /api/expenses
+    if (url.pathname === "/api/expenses") {
+      return handleExpenses(request, env);
+    }
+
+    // Todo list: GET /api/todos  POST /api/todos (toggle/delete/add)
+    if (url.pathname === "/api/todos") {
+      return handleTodos(request, env);
+    }
+
+    // Shopping list: GET /api/shopping  POST /api/shopping (toggle/delete/add)
+    if (url.pathname === "/api/shopping") {
+      return handleShopping(request, env);
     }
 
     // LINE Official Account module (opt-in via env flags)
@@ -438,6 +456,160 @@ async function handleNotes(request, env) {
       await env.MEMORY.put(kvKey, JSON.stringify(notes));
       return json({ ok: true, notes }, 200);
     }
+    return json({ error: "Method not allowed" }, 405);
+  } catch (e) {
+    return json({ error: String(e?.message || e) }, 500);
+  }
+}
+
+/* Expense ledger (income = positive, expense = negative) namespaced per owner
+   key (?key=me = website, ?key=<LINE userId> = a LINE user).
+   GET  /api/expenses?key=me                -> {items:[{id,amount,category,note,date}], total} sorted newest first
+   GET  /api/expenses?key=me&date=YYYY-MM-DD -> only that date
+   POST /api/expenses?key=me {amount, category?, note?, date?} -> add (YYYY-MM-DD, default today Bangkok)
+   POST /api/expenses {delete:id} -> remove one
+   Cap 500 items. */
+async function handleExpenses(request, env) {
+  const url = new URL(request.url);
+  const key = (url.searchParams.get("key") || "").trim() || "me";
+  const kvKey = "expenses:" + key;
+  try {
+    const raw = await env.MEMORY.get(kvKey);
+    let items = raw ? JSON.parse(raw).filter(Boolean) : [];
+
+    if (request.method === "GET") {
+      const date = (url.searchParams.get("date") || "").trim();
+      if (date) items = items.filter((i) => i.date === date);
+      items = items.slice(0, 500);
+      return json({ items, total: items.reduce((s, i) => s + (Number(i.amount) || 0), 0) }, 200);
+    }
+
+    if (request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      if (body.delete) {
+        items = items.filter((i) => i.id !== String(body.delete));
+        await env.MEMORY.put(kvKey, JSON.stringify(items));
+        return json({ ok: true, deleted: true, items }, 200);
+      }
+      const amount = Number(body.amount);
+      if (!isFinite(amount) || amount === 0) return json({ error: "Missing/invalid amount (non-zero number)" }, 400);
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || "").trim())
+        ? String(body.date).trim()
+        : new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Asia/Bangkok" })
+            .format(new Date()).replace(/\//g, "-");
+      const category = String(body.category || "").trim().slice(0, 40);
+      const note = String(body.note || "").trim().slice(0, 300);
+      const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      items.push({ id, amount, category: category || undefined, note: note || undefined, date, created: new Date().toISOString() });
+      items = items.slice(-500);
+      await env.MEMORY.put(kvKey, JSON.stringify(items));
+      return json({ ok: true, id }, 200);
+    }
+
+    return json({ error: "Method not allowed" }, 405);
+  } catch (e) {
+    return json({ error: String(e?.message || e) }, 500);
+  }
+}
+
+/* Todo list (namespaced per owner key). Items {id,text,done,created}.
+   GET  /api/todos?key=me           -> {items:[...]} (undone first, newest first)
+   POST /api/todos?key=me {text}                  -> add
+   POST /api/todos {toggle:id}                    -> flip done
+   POST /api/todos {delete:id}                    -> remove
+   POST /api/todos {clear:true}                   -> wipe all
+   Cap 200 items. */
+async function handleTodos(request, env) {
+  const key = (new URL(request.url).searchParams.get("key") || "").trim() || "me";
+  const kvKey = "todos:" + key;
+  try {
+    const raw = await env.MEMORY.get(kvKey);
+    let items = raw ? JSON.parse(raw).filter(Boolean) : [];
+
+    if (request.method === "GET") {
+      const sorted = [...items].sort((a, b) => (a.done === b.done ? (b.created || "").localeCompare(a.created || "") : a.done ? 1 : -1));
+      return json({ items: sorted.slice(0, 200) }, 200);
+    }
+
+    if (request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      if (body.clear) {
+        await env.MEMORY.delete(kvKey);
+        return json({ ok: true, cleared: true, items: [] }, 200);
+      }
+      if (body.delete) {
+        items = items.filter((i) => i.id !== String(body.delete));
+        await env.MEMORY.put(kvKey, JSON.stringify(items));
+        return json({ ok: true, deleted: true, items }, 200);
+      }
+      if (body.toggle) {
+        const target = items.find((i) => i.id === String(body.toggle));
+        if (!target) return json({ error: "Unknown todo id" }, 404);
+        target.done = !target.done;
+        await env.MEMORY.put(kvKey, JSON.stringify(items));
+        return json({ ok: true, done: target.done, items }, 200);
+      }
+      const text = String(body.text || "").trim();
+      if (!text) return json({ error: "Missing text" }, 400);
+      if (text.length > 1000) return json({ error: "Todo too long" }, 400);
+      items.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), text, done: false, created: new Date().toISOString() });
+      items = items.slice(-200);
+      await env.MEMORY.put(kvKey, JSON.stringify(items));
+      return json({ ok: true, items }, 200);
+    }
+
+    return json({ error: "Method not allowed" }, 405);
+  } catch (e) {
+    return json({ error: String(e?.message || e) }, 500);
+  }
+}
+
+/* Shopping list (namespaced per owner key). Same shape as todos: {id,text,done}.
+   GET  /api/shopping?key=me            -> {items:[...]}
+   POST /api/shopping?key=me {text}     -> add
+   POST /api/shopping {toggle:id}       -> flip done
+   POST /api/shopping {delete:id}       -> remove
+   POST /api/shopping {clear:true}      -> wipe all
+   Cap 200 items. */
+async function handleShopping(request, env) {
+  const key = (new URL(request.url).searchParams.get("key") || "").trim() || "me";
+  const kvKey = "shopping:" + key;
+  try {
+    const raw = await env.MEMORY.get(kvKey);
+    let items = raw ? JSON.parse(raw).filter(Boolean) : [];
+
+    if (request.method === "GET") {
+      const sorted = [...items].sort((a, b) => (a.done === b.done ? (b.created || "").localeCompare(a.created || "") : a.done ? 1 : -1));
+      return json({ items: sorted.slice(0, 200) }, 200);
+    }
+
+    if (request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      if (body.clear) {
+        await env.MEMORY.delete(kvKey);
+        return json({ ok: true, cleared: true, items: [] }, 200);
+      }
+      if (body.delete) {
+        items = items.filter((i) => i.id !== String(body.delete));
+        await env.MEMORY.put(kvKey, JSON.stringify(items));
+        return json({ ok: true, deleted: true, items }, 200);
+      }
+      if (body.toggle) {
+        const target = items.find((i) => i.id === String(body.toggle));
+        if (!target) return json({ error: "Unknown item id" }, 404);
+        target.done = !target.done;
+        await env.MEMORY.put(kvKey, JSON.stringify(items));
+        return json({ ok: true, done: target.done, items }, 200);
+      }
+      const text = String(body.text || "").trim();
+      if (!text) return json({ error: "Missing text" }, 400);
+      if (text.length > 1000) return json({ error: "Item too long" }, 400);
+      items.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), text, done: false, created: new Date().toISOString() });
+      items = items.slice(-200);
+      await env.MEMORY.put(kvKey, JSON.stringify(items));
+      return json({ ok: true, items }, 200);
+    }
+
     return json({ error: "Method not allowed" }, 405);
   } catch (e) {
     return json({ error: String(e?.message || e) }, 500);
