@@ -919,6 +919,7 @@ summary {
 <button onclick="sendText('สรุปวันนี้')">📋 สรุปวันนี้</button>
 <button onclick="sendText('งานค้าง')">✅ งานค้าง</button>
 <button onclick="sendText('ใช้เงินวันนี้')">💰 ใช้เงินวันนี้</button>
+<button onclick="sendText('วันสำคัญ')">📅 วันสำคัญ</button>
 <button onclick="sendText('ช่วยคิดคอนเทนต์ให้หน่อย')">💡 คิดคอนเทนต์</button>
 <button onclick="sendText('ช่วยวางแผนการตลาดให้หน่อย')">📈 การตลาด</button>
 <button onclick="sendText('ช่วยเขียนแคปชั่นขายสินค้า')">✍️ แคปชั่น</button>
@@ -1459,6 +1460,44 @@ function setupSession(){
             required:["text"]
           }
         },{
+          name:"translate",
+          description:"Translate text into another language. Call when the user asks to translate/แปลเป็นภาษาอังกฤษ/จีน/ญี่ปุ่น etc., or asks what something means in another language.",
+          parameters:{
+            type:"OBJECT",
+            properties:{
+              text:{type:"STRING",description:"The text to translate."},
+              to:{type:"STRING",description:"Target language code, e.g. EN, TH, JA, ZH, KO. Default EN."}
+            },
+            required:["text"]
+          }
+        },{
+          name:"thai_days",
+          description:"List Thai important days / Buddhist holidays for a year or what falls on a specific date. Call when the user asks about วันสำคัญ, วันหยุด, วันไหว้พระจันทร์, วันมาฆบูชา/วิสาขบูชา/ออกพรรษา, ฤกษ์, or what day is special.",
+          parameters:{
+            type:"OBJECT",
+            properties:{date:{type:"STRING",description:"Optional YYYY-MM-DD to see what's special on that exact date. Omit to list the current Bangkok year."}},
+            required:[]
+          }
+        },{
+          name:"request_clear",
+          description:"FIRST STEP of wiping a category. Call ONLY after the user explicitly asks to delete/wipe/ลบทั้งหมด/ล้างทั้งหมด for one of: notes, todos, shopping, expenses, calendar, history. Returns a confirmation code.",
+          parameters:{
+            type:"OBJECT",
+            properties:{kind:{type:"STRING",description:"One of: notes, todos, shopping, expenses, calendar, history."}},
+            required:["kind"]
+          }
+        },{
+          name:"confirm_clear",
+          description:"SECOND STEP of wiping a category. Call ONLY when the user confirms the wipe by repeating the confirmation code from request_clear (e.g. says the code back or says ยืนยัน).",
+          parameters:{
+            type:"OBJECT",
+            properties:{
+              kind:{type:"STRING",description:"Same kind as request_clear."},
+              code:{type:"STRING",description:"The confirmation code the user repeated."}
+            },
+            required:["kind","code"]
+          }
+        },{
           name:"set_emotion",
           description:"Set the avatar's facial expression/emotion by switching to a matching emotion video. Call this when the user requests an emotion or when the conversation mood calls for one. Emotions: neutral, happy, sad, excited, surprised, thinking, love, angry, sleepy, embarrassed, bye (wave goodbye when the user says farewell like ไปแล้วนะ/เดี๋ยวไปก่อน/บ๊ายบาย). Each plays its own short looping clip; the avatar returns to talk/listen video automatically as the conversation continues.",
           parameters:{
@@ -1509,6 +1548,10 @@ async function onWsMessage(ev){
       else if(fc.name==='add_shopping')handleAddShoppingTool(fc);
       else if(fc.name==='list_shopping')handleListShoppingTool(fc);
       else if(fc.name==='toggle_shopping')handleToggleShoppingTool(fc);
+      else if(fc.name==='translate')handleTranslateTool(fc);
+      else if(fc.name==='thai_days')handleThaiDaysTool(fc);
+      else if(fc.name==='request_clear')handleRequestClearTool(fc);
+      else if(fc.name==='confirm_clear')handleConfirmClearTool(fc);
     }
     return;
   }
@@ -1794,6 +1837,62 @@ async function handleToggleShoppingTool(fc){
     sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
   }
 }
+async function handleTranslateTool(fc){
+  const text=String(fc.args&&fc.args.text||'').trim();
+  const to=String(fc.args&&fc.args.to||'EN').trim();
+  if(!text){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:'missing text'}}]}});return}
+  try{
+    const r=await fetch('/api/translate?text='+encodeURIComponent(text)+'&to='+encodeURIComponent(to));
+    const d=await r.json();
+    if(r.ok&&d.ok){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{translated:d.text,to:to,result:'ส่งผลลัพธ์ที่แปลแล้วให้ผู้ใช้'}}]}})}
+    else sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:d.error||'translate failed'}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleThaiDaysTool(fc){
+  const date=String(fc.args&&fc.args.date||'').trim();
+  try{
+    const q='/api/thai-days'+(date?'?date='+encodeURIComponent(date):'');
+    const r=await fetch(q);
+    const d=await r.json();
+    if(date&&/^\d{4}-\d{2}-\d{2}$/.test(date)){
+      const hit=d.day||[];
+      sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{date:date,result:hit.length?('วัน '+date+' ตรงกับ: '+hit.map(function(x){return x.name}).join(', ')):('วันที่ '+date+' ไม่มีวันสำคัญในตาราง (ตรวจสอบแล้ว)')}}]}});
+    }else{
+      const days=d.days||[];
+      if(!days.length){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{result:'ไม่มีข้อมูลวันสำคัญปี '+(d.year||'')+' ในตาราง'}}]}});return}
+      const text=days.map(function(x){return '- '+x.date+' '+x.name}).join('\n');
+      sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{year:d.year,count:days.length,days_text:text}}]}});
+    }
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleRequestClearTool(fc){
+  const kind=String(fc.args&&fc.args.kind||'').trim();
+  try{
+    const r=await fetch('/api/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind})});
+    const d=await r.json();
+    if(d.pending){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{kind:d.kind,code:d.code,result:'เพื่อความปลอดภัย ต้องยืนยันก่อนลบ '+d.kind+' ทั้งหมด — พิมพ์รหัสยืนยัน '+d.code+' เพื่อยืนยันการลบ (หรือพิมพ์ "ยกเลิก" ได้เลย)'}}]}})}
+    else sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:d.error||'request failed'}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
+async function handleConfirmClearTool(fc){
+  const kind=String(fc.args&&fc.args.kind||'').trim();
+  const code=String(fc.args&&fc.args.code||'').trim();
+  if(!kind||!code){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:'missing kind or code'}}]}});return}
+  try{
+    const r=await fetch('/api/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind,code})});
+    const d=await r.json();
+    if(d.ok){sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{ok:true,wiped:d.wiped,result:'ลบ '+d.wiped+' ทั้งหมดเรียบร้อยแล้วค่ะ'}}]}})}
+    else sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:d.error||'invalid code',result:'รหัสยืนยันไม่ถูกต้องหรือหมดอายุ — เริ่มคำสั่งลบใหม่เพื่อขอรหัสใหม่'}}]}});
+  }catch(e){
+    sendWs({toolResponse:{functionResponses:[{id:fc.id,response:{error:String(e&&e.message||e)}}]}});
+  }
+}
 function sendToolResult(id,args){
   sendWs({toolResponse:{functionResponses:[{id,response:{result:"ok",args}}]}});
 }
@@ -1974,6 +2073,7 @@ function quickRoute(t){
   if(/^(งานค้าง|ทำอะไรค้าง|รายการที่ต้องทำ)$/.test(t)||t.indexOf('งานค้าง')>=0)return 'todos';
   if(/^(ซื้อของ|ของค้าง|ต้องซื้อ|รายการซื้อ|ช้อปปิ้ง|shopping|ของที่ต้องซื้อ)/.test(t))return 'shopping';
   if(/^(ใช้เงิน|ใช้เงินวันนี้|รายจ่าย|ค่าใช้จ่าย|ใช้จ่าย|รายรับ|expense)/.test(t))return 'expenses';
+  if(/^(วันสำคัญ|วันหยุด|ไหว้พระจันทร์|มาฆบูชา|วิสาขบูชา|เข้าพรรษา|ออกพรรษา|อาสาฬหบูชา|ฤกษ์)/.test(t))return 'thaidays';
   if(/^(ช่วยเหลือ|วิธีใช้|คำสั่ง|เมนู|help)/.test(t))return 'help';
   return null;
 }
@@ -2012,6 +2112,13 @@ function quickAnswer(q){
       return s+(its.length?'\nรายการ:\n'+its.map(function(i){return '• '+(Number(i.amount)>0?'+':'−')+Math.abs(Number(i.amount)).toLocaleString('th-TH')+(i.category?' ['+i.category+']':'')+(i.note?' '+i.note:'')}).join('\n'):'\n(ยังไม่มีรายการวันนี้ ลองพิมพ์ "ซื้อกาแฟไป 120" ให้ข้าวกล้องจดให้ได้นะคะ)');
     });
   }
+  if(q==='thaidays'){
+    return fetch('/api/thai-days').then(function(r){return r.json().catch(function(){return {}})}).then(function(d){
+      var days=d.days||[];
+      if(!days.length)return 'ไม่มีข้อมูลวันสำคัญปี '+(d.year||'')+' ในตารางค่ะ';
+      return '📅 วันสำคัญ/วันหยุด พ.ศ. '+((Number(d.year)+543)||'')+' ('+d.count+' วัน)\n\n'+days.map(function(x){return '• '+x.date+' '+x.name}).join('\n');
+    });
+  }
   return Promise.resolve("✨ คำสั่งลัดของข้าวกล้อง ✨\n\n"
     +"• \"สรุปวันนี้\" — สรุปนัด + โน้ตทั้งหมดวันนี้\n"
     +"• \"นัดวันนี้\" — ดูนัดในวันนี้\n"
@@ -2019,6 +2126,8 @@ function quickAnswer(q){
     +"• \"งานค้าง\" — ดู to-do ที่ยังไม่เสร็จ\n"
     +"• \"ซื้อของ\" — ดูรายการซื้อของ\n"
     +"• \"ใช้เงินวันนี้\" — ดูยอดใช้จ่าย/รายรับวันนี้\n"
+    +"• \"วันสำคัญ\" — ดูวันสำคัญ/วันหยุดของปีนี้\n"
+    +"• \"แปล...\" — ขอบอกให้แปล (พิมพ์ \"แปลเป็นภาษาอังกฤษว่า ...\")\n"
     +"• \"ช่วยเหลือ\" — เมนูนี้\n\n"
     +"หรือพิมพ์ถามปกติก็ได้นะคะ (จดนัด/เตือน/ค้นหา/สร้างภาพ/จดโน้ต/จดรายจ่าย/เพิ่มงาน)");
 }

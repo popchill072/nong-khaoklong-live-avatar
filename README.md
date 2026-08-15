@@ -107,6 +107,11 @@ LINE bot จะทำงานเมื่อตั้งตัวแปร LINE
 - Gemini free tier มี quota (~20 req/min/model) — ระบบมี fallback โมเดลอัตโนมัติ (`gemini-3.1-flash-lite` → ... → `gemini-2.0-flash-lite`) แต่ถ้าใช้หนักบนเว็บ+LINE พร้อมกันอาจยังโดนจำกัด
 - ตรวจ log: `npx wrangler tail nong-khaoklong-live-avatar`
 
+### แปลภาษา / วันสำคัญไทย / ยืนยันก่อนลบ
+- **แปล**: พิมพ์ "แปลเป็นภาษาอังกฤษว่า ..." (หรือ ask แปลเป็น ไทย/จีน/ญี่ปุ่น ฯลฯ) → เรียก `/api/translate` (Gemini text, ฟรี) — ทั้ง LINE และเว็บ
+- **วันสำคัญ/วันหยุดไทย**: พิมพ์ "วันสำคัญ" หรือถามเจาะจง "วันไหว้พระจันทร์ปีนี้", "อาสาฬหบูชา ตรงกับวันไหน" → `/api/thai-days` ตอบจากตาราง static ที่ตรวจสอบแล้ว (ปี พ.ศ.2569/2026: มาฆบูชา 3 มี.ค., วิสาขบูชา 31 พ.ค., อาสาฬหบูชา 29 ก.ค., เข้าพรรษา 30 ก.ค., ออกพรรษา 26 ต.ค., ไหว้พระจันทร์ 25 ก.ย.) — ใช้อัปเดตตารางปีใหม่ใน `THAI_DAYS` (worker.js) ตามประกาศจริง
+- **ยืนยันก่อนลบ**: คำสั่งลบ/ล้างทั้งหมด (โน้ต, งาน, ซื้อของ, รายรับ-จ่าย, ปฏิทิน, ประวัติ) ต้องยืนยัน 2 ขั้น — AI ขอรหัสยืนยันก่อน (`request_clear`) แล้วยืนยันด้วยรหัส (`confirm_clear`); REST ลบ/l้างโดยตรงต้องส่ง `{clear:true, confirm:"true"}` ไม่งั้น error 400 (token หมดอายุ 15 นาที)
+
 ---
 
 ## API endpoints (ภายใน Worker)
@@ -122,6 +127,9 @@ LINE bot จะทำงานเมื่อตั้งตัวแปร LINE
 | `/api/expenses` | GET/POST | บันทึกรายรับ-รายจ่าย (amount +, ขั้น income ใช้ +) |
 | `/api/todos` | GET/POST | รายการงาน (เพิ่ม/สลับเสร็จ/ลบ/ล้าง) |
 | `/api/shopping` | GET/POST | รายการซื้อของ (เพิ่ม/สลับซื้อแล้ว/ลบ/ล้าง) |
+| `/api/translate?text=...&to=EN` | GET | แปลข้อความ (Gemini text, ฟรี) |
+| `/api/thai-days` | GET | วันสำคัญ/วันหยุดไทย (ตาราง static; `?date=YYYY-MM-DD` ดูเฉพาะวัน) |
+| `/api/clear` | POST | ล้างข้อมูลแบบ 2 ขั้น (`{kind}` → ได้รหัส → `{kind,code}`) |
 | `/api/image` | POST | สร้างภาพ (Nano Banana) |
 | `/api/line/webhook` | POST | webhook LINE (ตรวจ signature + ตอบ) |
 | `/api/line/health` | GET | ดูสถานะโมดูล LINE |

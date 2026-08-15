@@ -160,6 +160,47 @@ const TOOL_DECLARATIONS = [
       required: ["text"],
     },
   },
+  {
+    name: "translate",
+    description: "Translate text into another language. Call when the user asks to translate/แปล as a language / แปลเป็นภาษาอังกฤษ/อังกฤษ/จีน/ญี่ปุ่น ฯลฯ, or asks what something means in another language.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        text: { type: "STRING", description: "The text to translate." },
+        to: { type: "STRING", description: "Target language, e.g. EN, TH, JA, ZH, KO. Default EN." },
+      },
+      required: ["text"],
+    },
+  },
+  {
+    name: "thai_days",
+    description: "List Thai important days / Buddhist holidays for a year or what falls on a specific date. Call when the user asks about วันสำคัญ, วันหยุด, วันไหว้พระจันทร์, วันมาฆบูชา/วิสาขบูชา/ออกพรรษา, ฤกษ์, or what day is special.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        date: { type: "STRING", description: "Optional YYYY-MM-DD (Gregorian) to see what's special on that exact date. Omit to list the current Bangkok year." },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "request_clear",
+    description: "FIRST STEP of wiping a category. Call ONLY after the user explicitly asks to delete/wipe/ลบทั้งหมด/ล้างทั้งหมด for one of: notes, todos, shopping, expenses, calendar, history. Returns a confirmation code. Do NOT call clear_store directly.",
+    parameters: {
+      type: "OBJECT",
+      properties: { kind: { type: "STRING", description: "One of: notes, todos, shopping, expenses, calendar, history." } },
+      required: ["kind"],
+    },
+  },
+  {
+    name: "confirm_clear",
+    description: "SECOND STEP of wiping a category. Call ONLY when the user confirms the wipe by repeating the confirmation code from request_clear (e.g. says the code back or says ยืนยัน).",
+    parameters: {
+      type: "OBJECT",
+      properties: { kind: { type: "STRING", description: "Same kind as request_clear." }, code: { type: "STRING", description: "The confirmation code the user repeated." } },
+      required: ["kind", "code"],
+    },
+  },
 ];
 
 // Verify the x-line-signature header of the raw webhook body.
@@ -285,6 +326,7 @@ function matchQuick(text) {
   if (/^(งานค้าง|ทำอะไรค้าง|รายการที่ต้องทำ)$/.test(t) || t.includes("งานค้าง")) return { cmd: "todos" };
   if (/^(ซื้อของ|ของค้าง|ต้องซื้อ|รายการซื้อ|ช้อปปิ้ง|shopping|ของที่ต้องซื้อ)/.test(t)) return { cmd: "shopping" };
   if (/^(ใช้เงิน|ใช้เงินวันนี้|รายจ่าย|ค่าใช้จ่าย|ใช้จ่าย|รายรับ|expense)/.test(t)) return { cmd: "expenses" };
+  if (/^(วันสำคัญ|วันหยุด|ไหว้พระจันทร์|มาฆบูชา|วิสาขบูชา|เข้าพรรษา|ออกพรรษา|อาสาฬหบูชา|ฤกษ์)/.test(t)) return { cmd: "thaidays" };
   if (/^(ช่วยเหลือ|วิธีใช้|คำสั่ง|เมนู|help)/.test(t)) return { cmd: "help" };
   return null;
 }
@@ -342,6 +384,7 @@ async function runQuick(q, env, services, userId) {
     if (q.cmd === "todos") return await quickTodos(env, services, userId);
     if (q.cmd === "shopping") return await quickShopping(env, services, userId);
     if (q.cmd === "expenses") return await quickExpenses(env, services, userId);
+    if (q.cmd === "thaidays") return await quickThaiDays(env, services, userId);
     return "✨ คำสั่งลัดของข้าวกล้อง ✨\n\n"
       + "• \"สรุปวันนี้\" — สรุปนัด + โน้ตทั้งหมดวันนี้\n"
       + "• \"นัดวันนี้\" — ดูนัดในวันนี้\n"
@@ -349,6 +392,8 @@ async function runQuick(q, env, services, userId) {
       + "• \"งานค้าง\" — ดู to-do ที่ยังไม่เสร็จ\n"
       + "• \"ซื้อของ\" — ดูรายการซื้อของ\n"
       + "• \"ใช้เงินวันนี้\" — ดูยอดใช้จ่าย/รายรับวันนี้\n"
+      + "• \"วันสำคัญ\" — ดูวันสำคัญ/วันหยุดของปีนี้\n"
+      + "• \"แปล...\" — ขอบอกให้แปล (พิมพ์ \"แปลเป็นภาษาอังกฤษว่า ...\")\n"
       + "• \"ช่วยเหลือ\" — เมนูนี้\n\n"
       + "หรือพิมพ์ถามปกติก็ได้นะคะ (จดนัด/เตือน/ค้นหา/สร้างภาพ/จดโน้ต/จดรายจ่าย/เพิ่มงาน)";
   } catch (e) {
@@ -374,6 +419,14 @@ async function quickShopping(env, services, userId) {
   let s = `🛒 รายการซื้อของ (${items.length} — ยังต้องซื้อ ${undone.length})\n`;
   s += undone.length ? undone.map((i) => `• ${String(i.text || "").slice(0, 140)}`).join("\n") : "• ไม่มีของค้างซื้อแล้ว 🛍️";
   return s;
+}
+
+async function quickThaiDays(env, services, userId) {
+  const r = await services.handleThaiDays(new Request("https://internal/api/thai-days"), env);
+  const d = await r.json().catch(() => ({}));
+  const days = d.days || [];
+  if (!days.length) return `ไม่มีข้อมูลวันสำคัญปี ${d.year || ""} ในตารางค่ะ`;
+  return `📅 วันสำคัญ/วันหยุด พ.ศ. ${(Number(d.year) + 543) || ""} (${d.count} วัน)\n\n` + days.map((x) => `• ${x.date} ${x.name}`).join("\n");
 }
 
 async function quickExpenses(env, services, userId) {
@@ -668,6 +721,50 @@ async function runTool(name, args, env, services, baseUrl, userId) {
         }), env);
         const d = await r.json().catch(() => ({}));
         return { response: { ok: !!d.ok, text, done: !!d.done, result: `ของ "${text}" ${d.done ? "ซื้อแล้ว ✅" : "กลับมาเป็นยังไม่ซื้อ"}` } };
+      }
+      case "translate": {
+        const text = String(args.text || "").trim();
+        if (!text) return { response: { error: "missing text" } };
+        const to = String(args.to || "EN").trim();
+        const r = await services.handleTranslate(new Request("https://internal/api/translate?text=" + encodeURIComponent(text) + "&to=" + encodeURIComponent(to)), env);
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.ok) return { response: { translated: d.text, to, result: "ส่งผลลัพธ์ที่แปลแล้วให้ผู้ใช้" } };
+        return { response: { result: `translate failed: ${d?.error || "quota/error"}. บอกผู้ใช้ว่าแปลไม่ได้ตอนนี้` } };
+      }
+      case "thai_days": {
+        const date = String(args.date || "").trim();
+        const q = "https://internal/api/thai-days" + (date ? "?date=" + encodeURIComponent(date) : "");
+        const r = await services.handleThaiDays(new Request(q), env);
+        const d = await r.json().catch(() => ({}));
+        if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          const hit = d.day || [];
+          return { response: { date, result: hit.length ? `วัน ${date} ตรงกับ: ${hit.map((x) => x.name).join(", ")}` : `วันที่ ${date} ไม่มีวันสำคัญในตาราง (ตรวจสอบแล้ว)` } };
+        }
+        const days = d.days || [];
+        if (!days.length) return { response: { result: `ไม่มีข้อมูลวันสำคัญสำหรับปี ${d.year || ""} ในตาราง` } };
+        const text = days.map((x) => `- ${x.date} ${x.name}`).join("\n");
+        return { response: { year: d.year, count: days.length, days_text: text } };
+      }
+      case "request_clear": {
+        const kind = String(args.kind || "").trim();
+        if (!kind) return { response: { error: "missing kind (notes|todos|shopping|expenses|calendar|history)" } };
+        const r = await services.handleClear(new Request("https://internal/api/clear?key=" + encodeURIComponent(userId), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind }),
+        }), env);
+        const d = await r.json().catch(() => ({}));
+        if (!d.pending) return { response: { error: d?.error || "request failed" } };
+        return { response: { kind: d.kind, code: d.code, result: `เพื่อความปลอดภัย ต้องยืนยันก่อนลบ ${d.kind} ทั้งหมด — พิมพ์รหัสยืนยัน ${d.code} เพื่อยืนยันการลบ (หรือพิมพ์ "ยกเลิก" ได้เลย)` } };
+      }
+      case "confirm_clear": {
+        const kind = String(args.kind || "").trim();
+        const code = String(args.code || "").trim();
+        if (!kind || !code) return { response: { error: "missing kind or code" } };
+        const r = await services.handleClear(new Request("https://internal/api/clear?key=" + encodeURIComponent(userId), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, code }),
+        }), env);
+        const d = await r.json().catch(() => ({}));
+        if (!d.ok) return { response: { error: d?.error || "invalid code", result: "รหัสยืนยันไม่ถูกต้องหรือหมดอายุ — เริ่มคำสั่งลบใหม่เพื่อขอรหัสใหม่" } };
+        return { response: { ok: true, wiped: d.wiped, result: `ลบ ${d.wiped} ทั้งหมดเรียบร้อยแล้วค่ะ` } };
       }
       default:
         return { response: { error: "unknown tool: " + name } };

@@ -20,6 +20,9 @@ const lineServices = {
   handleExpenses,
   handleTodos,
   handleShopping,
+  handleTranslate,
+  handleThaiDays,
+  handleClear,
   generateImage,
 };
 
@@ -75,6 +78,21 @@ export default {
     // Shopping list: GET /api/shopping  POST /api/shopping (toggle/delete/add)
     if (url.pathname === "/api/shopping") {
       return handleShopping(request, env);
+    }
+
+    // Translation: GET /api/translate?text=...&to=EN|TH (Gemini text, free)
+    if (url.pathname === "/api/translate") {
+      return handleTranslate(request, env);
+    }
+
+    // Thai important days / Buddhist holidays: GET /api/thai-days (deterministic static)
+    if (url.pathname === "/api/thai-days") {
+      return handleThaiDays(request, env);
+    }
+
+    // Confirmed destructive actions: POST /api/clear {kind, code?} -> two-step wipe
+    if (url.pathname === "/api/clear") {
+      return handleClear(request, env);
     }
 
     // LINE Official Account module (opt-in via env flags)
@@ -380,6 +398,9 @@ async function handleCalendar(request, env) {
     }
 
     if (request.method === "DELETE") {
+      if (String((await request.json().catch(() => ({}))).confirm) !== "true") {
+        return json({ error: "Destructive: send {confirm:\"true\"} to wipe calendar" }, 400);
+      }
       await env.MEMORY.delete(kvKey);
       return json({ ok: true, cleared: true, events: [] }, 200);
     }
@@ -445,6 +466,7 @@ async function handleNotes(request, env) {
       const raw = await env.MEMORY.get(kvKey);
       let notes = raw ? JSON.parse(raw) : [];
       if (body.clear) {
+        if (String(body.confirm) !== "true") return json({ error: "Destructive: send {clear:true, confirm:\"true\"}" }, 400);
         await env.MEMORY.delete(kvKey);
         return json({ notes: [], cleared: true }, 200);
       }
@@ -534,6 +556,7 @@ async function handleTodos(request, env) {
     if (request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       if (body.clear) {
+        if (String(body.confirm) !== "true") return json({ error: "Destructive: send {clear:true, confirm:\"true\"}" }, 400);
         await env.MEMORY.delete(kvKey);
         return json({ ok: true, cleared: true, items: [] }, 200);
       }
@@ -586,6 +609,7 @@ async function handleShopping(request, env) {
     if (request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       if (body.clear) {
+        if (String(body.confirm) !== "true") return json({ error: "Destructive: send {clear:true, confirm:\"true\"}" }, 400);
         await env.MEMORY.delete(kvKey);
         return json({ ok: true, cleared: true, items: [] }, 200);
       }
@@ -614,6 +638,136 @@ async function handleShopping(request, env) {
   } catch (e) {
     return json({ error: String(e?.message || e) }, 500);
   }
+}
+
+/* Thai important days — deterministic static table (verified against official
+   sources Oct 2026). Lunar Buddhist dates differ every year, so this is a
+   curated per-year list, not a calendar calculation. Add new years by
+   extending THAI_DAYS. */
+const THAI_DAYS = {
+  "2026": [
+    { date: "2026-01-01", name: "วันขึ้นปีใหม่", type: "holiday" },
+    { date: "2026-01-02", name: "วันหยุดพิเศษ (เพิ่มกรณีพิเศษ)", type: "holiday" },
+    { date: "2026-03-03", name: "วันมาฆบูชา", type: "buddhist" },
+    { date: "2026-04-06", name: "วันจักรี", type: "holiday" },
+    { date: "2026-04-13", name: "วันสงกรานต์ (วันผู้สูงอายุ)", type: "festival" },
+    { date: "2026-04-14", name: "วันสงกรานต์ (วันครอบครัว)", type: "festival" },
+    { date: "2026-04-15", name: "วันสงกรานต์ (วันเถลิงศก)", type: "festival" },
+    { date: "2026-05-01", name: "วันแรงงานแห่งชาติ", type: "holiday" },
+    { date: "2026-05-04", name: "วันฉัตรมงคล", type: "holiday" },
+    { date: "2026-05-13", name: "วันพืชมงคลจรดพระนังคัลแรกนาขวัญ", type: "ceremony" },
+    { date: "2026-05-31", name: "วันวิสาขบูชา", type: "buddhist" },
+    { date: "2026-06-01", name: "ชดเชยวันวิสาขบูชา", type: "holiday" },
+    { date: "2026-06-03", name: "วันเฉลิมพระชนมพรรษา สมเด็จพระนางเจ้าสุทิดา พัชรสุธาพิมลลักษณ พระบรมราชินี", type: "royal" },
+    { date: "2026-06-08", name: "วันอัฏฐมีบูชา", type: "buddhist" },
+    { date: "2026-07-28", name: "วันเฉลิมพระชนมพรรษา พระบาทสมเด็จพระเจ้าอยู่หัว", type: "royal" },
+    { date: "2026-07-29", name: "วันอาสาฬหบูชา", type: "buddhist" },
+    { date: "2026-07-30", name: "วันเข้าพรรษา", type: "buddhist" },
+    { date: "2026-08-12", name: "วันแม่แห่งชาติ", type: "royal" },
+    { date: "2026-09-25", name: "วันไหว้พระจันทร์ (เทศกาลไหว้พระจันทร์)", type: "festival" },
+    { date: "2026-10-13", name: "วันนวมินทรมหาราช", type: "royal" },
+    { date: "2026-10-23", name: "วันปิยมหาราช", type: "holiday" },
+    { date: "2026-10-26", name: "วันออกพรรษา", type: "buddhist" },
+    { date: "2026-12-05", name: "วันพ่อแห่งชาติ / วันชาติ และวันคล้ายวันพระบรมราชสมภพ รัชกาลที่ 9", type: "royal" },
+    { date: "2026-12-07", name: "ชดเชยวันพ่อแห่งชาติ", type: "holiday" },
+    { date: "2026-12-10", name: "วันรัฐธรรมนูญ", type: "holiday" },
+    { date: "2026-12-31", name: "วันสิ้นปี", type: "holiday" },
+  ],
+};
+
+// Thai important days / Buddhist holidays (deterministic from static table).
+// GET /api/thai-days            -> { year, days } for the current Bangkok year
+// GET /api/thai-days?date=YYYY-MM-DD -> what's special on that date
+async function handleThaiDays(request, env) {
+  const url = new URL(request.url);
+  const now = new Date();
+  const yy = new Intl.DateTimeFormat("en-CA", { year: "numeric", timeZone: "Asia/Bangkok" }).format(now);
+  const date = (url.searchParams.get("date") || "").trim();
+  const year = /^\d{4}$/.test(date.slice(0, 4)) ? date.slice(0, 4) : yy;
+  const days = THAI_DAYS[year] || [];
+  if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const hit = days.filter((d) => d.date === date);
+    return json({ date, year, day: hit }, 200);
+  }
+  return json({ year, count: days.length, days }, 200);
+}
+
+// Check in to see which important Thai days fall in window [windowStart, windowStart+range) days.
+// Used by quick "วันสำคัญ" to show today + next 14 days mostly. Not exported separately;
+// quickAnswer reads /api/thai-days and filters client-side.
+
+/* Translation using the free Gemini text model (no tooling, no quota on Gemini
+   Live). Two-step confirm path lives in /api/clear; this is the real translate.
+   GET /api/translate?text=...&to=EN|TH|JA|... (target language code or name)
+   Uses the same API key as the image generator. */
+async function handleTranslate(request, env) {
+  const url = new URL(request.url);
+  const text = (url.searchParams.get("text") || "").trim();
+  const to = (url.searchParams.get("to") || "EN").trim();
+  const apiKey = env.GEMINI_API_KEY;
+  if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
+  if (!apiKey) return json({ error: "Missing GEMINI_API_KEY secret" }, 500);
+  if (!text) return json({ error: "Missing text" }, 400);
+  if (text.length > 2000) return json({ error: "Text too long" }, 400);
+
+  const wanted = env.LINE_MODEL || "gemini-3.5-flash";
+  const candidates = [wanted, "gemini-3.1-flash-lite", "gemini-2.0-flash-lite"];
+  const seen = new Set();
+  for (const model of candidates) {
+    if (seen.has(model)) continue;
+    seen.add(model);
+    try {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: `แปลข้อความต่อไปนี้เป็นภาษา ${to} ส่งเฉพาะผลลัพธ์ที่แปลแล้ว ไม่มีคำอธิบายเพิ่มเติม:\n\n${text}` }] }],
+            generationConfig: { temperature: 0.2, maxOutputTokens: 1000 },
+          }),
+        }
+      );
+      const d = await r.json();
+      if (!r.ok) continue;
+      const out = d?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("").trim();
+      if (out) return json({ ok: true, from: "auto", to, text: out.slice(0, 2000) }, 200);
+    } catch (e) {
+      continue;
+    }
+  }
+  return json({ error: "Translation failed (model unavailable)" }, 429);
+}
+
+/* Two-step destructive action confirmation (protects against accidental wipes).
+   POST /api/clear {kind:"notes"|"todos"|"shopping"|"expenses"|"calendar"|"history", code?}
+   Step 1 (no code): creates a KV token TTL 15min, returns {pending:true, kind, code}.
+   Step 2 (with code): verifies token, wipes that per-user store, deletes token. */
+const CLEAR_KINDS = ["notes", "todos", "shopping", "expenses", "calendar", "history"];
+async function handleClear(request, env) {
+  const url = new URL(request.url);
+  const key = (url.searchParams.get("key") || "").trim() || "me";
+  if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  const body = await request.json().catch(() => ({}));
+  const kind = String(body.kind || "").trim();
+  if (!CLEAR_KINDS.includes(kind)) return json({ error: "Unknown kind: " + kind }, 400);
+
+  const code = String(body.code || "").trim();
+  const tokenKey = "pendingclear:" + key + ":" + kind;
+  if (!code) {
+    const newCode = Math.random().toString(36).slice(2, 8);
+    await env.MEMORY.put(tokenKey, newCode, { expirationTtl: 15 * 60 });
+    return json({ pending: true, kind, code: newCode }, 200);
+  }
+
+  const stored = await env.MEMORY.get(tokenKey).catch(() => null);
+  if (!stored || stored !== code) return json({ error: "Code not valid or expired" }, 403);
+
+  const kvKey = kind === "history" ? "h:" + key : kind + ":" + key;
+  await env.MEMORY.delete(kvKey);
+  await env.MEMORY.delete(tokenKey);
+  return json({ ok: true, wiped: kind }, 200);
 }
 
 function json(obj, status) {
