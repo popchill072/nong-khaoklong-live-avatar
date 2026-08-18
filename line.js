@@ -269,6 +269,10 @@ async function handleLineEvent(ev, env, services) {
     const text = String(ev.message.text || "").trim();
     if (!text) return;
 
+    // Log the LINE userId of every sender so the owner can find their own
+    // userId (needed for LINE_ADMIN_USER) via `wrangler tail`.
+    console.log("LINE msg userId=" + userId);
+
     await rememberLineUser(env, userId);
 
     // Owner-only broadcast command: "ประกาศ: <ข้อความ>" (or "แจ้งข่าว: <ข้อความ>").
