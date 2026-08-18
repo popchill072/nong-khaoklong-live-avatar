@@ -6,6 +6,7 @@ import {
   lineHealth,
   serveLineMedia,
   handleScheduled,
+  handleAnnounce,
 } from "./line.js";
 
 // Handles to the original worker services. The LINE module calls these
@@ -93,6 +94,12 @@ export default {
     // Confirmed destructive actions: POST /api/clear {kind, code?} -> two-step wipe
     if (url.pathname === "/api/clear") {
       return handleClear(request, env);
+    }
+
+    // Owner broadcast announcement: GET /api/announce (read) or
+    // POST /api/announce {text} + `x-announce-key` header (publish).
+    if (url.pathname === "/api/announce") {
+      return handleAnnounce(request, env);
     }
 
     // LINE Official Account module (opt-in via env flags)

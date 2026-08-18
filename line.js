@@ -271,6 +271,20 @@ async function handleLineEvent(ev, env, services) {
 
     await rememberLineUser(env, userId);
 
+    // Owner-only broadcast command: "ประกาศ: <ข้อความ>" (or "แจ้งข่าว: <ข้อความ>").
+    // Requires LINE_ADMIN_USER set to the owner's LINE userId.
+    if (isOwner(env, userId)) {
+      const m = text.match(/^(ประกาศ|แจ้งข่าว|announce)[:：]\s*(.+)$/i);
+      if (m && m[2].trim()) {
+        const r = await publishAnnounce(env, m[2]);
+        const msg = r.ok
+          ? `✅ บันทึกประกาศ v${r.v} แล้วค่ะ (${r.date})\nระบบจะทยอยส่งให้ผู้ใช้ทุกคนที่เคยคุย (ไม่ซ้ำใครซ้ำเวอร์ชัน) ประมาณ ${ANNOUNCE_BATCH} คน/รอบ cron ผู้ใช้ที่ปิดรับข่าวจะไม่ถูกรบกวน`
+          : "⚠️ ยังไม่ได้ประกาศ: " + (r.error || "ข้อความว่างเปล่า");
+        await replyMessages(env, replyToken, [{ type: "text", text: msg.slice(0, 5000) }]);
+        return;
+      }
+    }
+
     // Deterministic quick commands: reply straight from KV (no Gemini, no quota).
     const quick = matchQuick(text);
     if (quick) {
@@ -327,6 +341,8 @@ function matchQuick(text) {
   if (/^(ซื้อของ|ของค้าง|ต้องซื้อ|รายการซื้อ|ช้อปปิ้ง|shopping|ของที่ต้องซื้อ)/.test(t)) return { cmd: "shopping" };
   if (/^(ใช้เงิน|ใช้เงินวันนี้|รายจ่าย|ค่าใช้จ่าย|ใช้จ่าย|รายรับ|expense)/.test(t)) return { cmd: "expenses" };
   if (/^(วันสำคัญ|วันหยุด|ไหว้พระจันทร์|มาฆบูชา|วิสาขบูชา|เข้าพรรษา|ออกพรรษา|อาสาฬหบูชา|ฤกษ์)/.test(t)) return { cmd: "thaidays" };
+  if (/^(ปิดข่าว|ปิดประกาศ|หยุดรับข่าว|ไม่รับข่าว|เลิกรับข่าว|unsubscribe)/.test(t)) return { cmd: "announce_off" };
+  if (/^(เปิดข่าว|เปิดประกาศ|รับข่าวต่อ|สมัครรับข่าว|subscribe|รับข่าว)/.test(t)) return { cmd: "announce_on" };
   if (/^(ช่วยเหลือ|วิธีใช้|คำสั่ง|เมนู|help)/.test(t)) return { cmd: "help" };
   return null;
 }
@@ -385,6 +401,14 @@ async function runQuick(q, env, services, userId) {
     if (q.cmd === "shopping") return await quickShopping(env, services, userId);
     if (q.cmd === "expenses") return await quickExpenses(env, services, userId);
     if (q.cmd === "thaidays") return await quickThaiDays(env, services, userId);
+    if (q.cmd === "announce_off") {
+      try { await env.MEMORY.put("announceOff:" + userId, "1", { expirationTtl: 365 * 24 * 3600 }); } catch (e) {}
+      return "📴 ปิดรับประกาศแล้วค่ะ — จะไม่รบกวนเรื่องฟีเจอร์ใหม่/ข่าวสารอีก พิมพ์ \"เปิดข่าว\" เมื่อไหร่ก็กลับมารับได้เสมอ";
+    }
+    if (q.cmd === "announce_on") {
+      try { await env.MEMORY.delete("announceOff:" + userId); } catch (e) {}
+      return "📣 เปิดรับประกาศแล้วค่ะ — คราวหน้ามีฟีเจอร์ใหม่/ข่าวสารจะแจ้งให้ทราบก่อนใคร";
+    }
     return "✨ คำสั่งลัดของข้าวกล้อง ✨\n\n"
       + "• \"สรุปวันนี้\" — สรุปนัด + โน้ตทั้งหมดวันนี้\n"
       + "• \"นัดวันนี้\" — ดูนัดในวันนี้\n"
@@ -394,6 +418,7 @@ async function runQuick(q, env, services, userId) {
       + "• \"ใช้เงินวันนี้\" — ดูยอดใช้จ่าย/รายรับวันนี้\n"
       + "• \"วันสำคัญ\" — ดูวันสำคัญ/วันหยุดของปีนี้\n"
       + "• \"แปล...\" — ขอบอกให้แปล (พิมพ์ \"แปลเป็นภาษาอังกฤษว่า ...\")\n"
+      + "• \"ปิดข่าว\" / \"เปิดข่าว\" — หยุด / กลับมารับประกาศอัปเดตฟีเจอร์ใหม่\n"
       + "• \"ช่วยเหลือ\" — เมนูนี้\n\n"
       + "หรือพิมพ์ถามปกติก็ได้นะคะ (จดนัด/เตือน/ค้นหา/สร้างภาพ/จดโน้ต/จดรายจ่าย/เพิ่มงาน)";
   } catch (e) {
@@ -454,6 +479,92 @@ async function rememberLineUser(env, userId) {
     }
   } catch (e) {
     console.error("rememberLineUser", e?.message || e);
+  }
+}
+
+/* --------------- Announcements (owner broadcast to LINE users) ------------ */
+
+const ANNOUNCE_BATCH = 20; // users pushed per cron run (stays cheap + safe)
+
+// Auto-appended footer so users always know the current capabilities.
+const ANNOUNCE_FOOTER =
+  "💛 พิมพ์ \"ช่วยเหลือ\" เพื่อดูคำสั่งทั้งหมดได้เลยค่ะ\n\n"
+  + "✨ ตอนนี้ข้าวกล้องทำได้: จดนัด + เตือนล่วงหน้า / โน้ต / to-do งานค้าง / "
+  + "รายการซื้อของ / บันทึกรับ-จ่าย / แปลภาษา / วันสำคัญไทย / ค้นข้อมูลเว็บ / สร้างรูปภาพ / พูดคุยถาม-ตอบ";
+
+// True when the sender is the bot owner (LINE_ADMIN_USER = owner's LINE userId).
+function isOwner(env, userId) {
+  const o = String(env.LINE_ADMIN_USER || "").trim();
+  return !!(o && userId && o === userId);
+}
+
+// Publish a new announcement: increments the version so cron broadcasts it to
+// every user who hasn't seen that version yet. Returns {ok, v, date}.
+export async function publishAnnounce(env, text) {
+  const t = String(text || "").trim();
+  if (!t) return { ok: false, error: "empty text" };
+  const raw = await env.MEMORY.get("announce").catch(() => null);
+  const cur = raw ? JSON.parse(raw) : {};
+  const v = (Number(cur.v) || 0) + 1;
+  const date = bangkokNow().date;
+  await env.MEMORY.put("announce", JSON.stringify({ v, date, text: t + "\n\n" + ANNOUNCE_FOOTER }));
+  return { ok: true, v, date };
+}
+
+// REST endpoint for publishing announcements. Owner-guarded:
+//   POST /api/announce {text}  + header `x-announce-key: LINE_ANNOUNCE_KEY`
+//   GET  /api/announce         -> current announcement (public, for the web)
+export async function handleAnnounce(request, env) {
+  const json = (obj, status) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
+
+  if (request.method === "GET") {
+    const raw = await env.MEMORY.get("announce").catch(() => null);
+    const d = raw ? JSON.parse(raw) : null;
+    return json(d || { v: 0 });
+  }
+  if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
+  const expect = String(env.LINE_ANNOUNCE_KEY || "").trim();
+  if (!expect) return json({ error: "Announce disabled (set LINE_ANNOUNCE_KEY)" }, 403);
+  const got = String(request.headers.get("x-announce-key") || "").trim();
+  if (got !== expect) return json({ error: "Invalid key" }, 401);
+
+  let text = "";
+  try {
+    text = String((await request.json()).text || "");
+  } catch (e) {
+    return json({ error: "Bad JSON" }, 400);
+  }
+  const r = await publishAnnounce(env, text);
+  return json(r, r.ok ? 200 : 400);
+}
+
+// Cron: push the latest announcement to users who haven't seen it yet. Dedupes
+// per (version, user), skips opted-out users, and only sends a few per run so
+// the cron stays cheap. Run before the reminders gate so it works even when
+// LINE_REMINDERS_ENABLED=false.
+export async function broadcastAnnounce(env) {
+  const raw = await env.MEMORY.get("announce").catch(() => null);
+  if (!raw) return;
+  let ann;
+  try { ann = JSON.parse(raw); } catch (e) { return; }
+  const v = Number(ann.v) || 0;
+  if (!v || !String(ann.text || "").trim()) return;
+
+  const usersRaw = await env.MEMORY.get("line:users").catch(() => null);
+  const users = usersRaw ? JSON.parse(usersRaw).filter(Boolean) : [];
+  let sent = 0;
+  for (const uid of users) {
+    if (sent >= ANNOUNCE_BATCH) break;
+    if (!uid || uid === "unknown") continue;
+    if (await env.MEMORY.get("announceOff:" + uid).catch(() => null)) continue;
+    const seenKey = "announceSeen:" + v + ":" + uid;
+    if (await env.MEMORY.get(seenKey).catch(() => null)) continue;
+    const ok = await pushMessage(env, uid, ann.text);
+    if (ok) {
+      await env.MEMORY.put(seenKey, "1", { expirationTtl: 90 * 24 * 3600 });
+      sent++;
+    }
   }
 }
 
@@ -882,6 +993,10 @@ export async function handleScheduled(env, services) {
       }
     }
   }
+
+  // Announcement broadcast — owner publishes via "ประกาศ: <ข้อความ>" (LINE) or
+  // POST /api/announce; cron pushes to each active user once per version.
+  await broadcastAnnounce(env);
 
   if (String(env.LINE_REMINDERS_ENABLED).toLowerCase() === "false") return;
 
