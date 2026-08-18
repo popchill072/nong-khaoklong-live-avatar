@@ -589,13 +589,18 @@ async function runAIDialog(env, services, userId, userText) {
     new Request("https://internal/api/history"), new URL("https://internal/api/history?key=" + userId), env
   ).then((r) => r.json()).then((d) => Array.isArray(d.turns) ? d.turns : []).catch(() => []);
 
+  // Inject today's Bangkok date (Buddhist year) into the system prompt on every
+  // request so the model never answers with a stale/guessed date or year.
+  const systemNote = "ข้อมูลวัน/เวลาปัจจุบัน (เวลาไทย): " + bangkokNowText()
+    + " — ใช้ค่านี้เป็นหลักเมื่อตอบเรื่องวัน/เวลา/พรุ่งนี้/เมื่อวาน/ปี อย่าเดาจากความจำตัวเอง";
+
   const contents = turns.slice(-MAX_HISTORY).map((t) => ({ role: t.role, parts: t.parts || [] }));
   contents.push({ role: "user", parts: [{ text: userText }] });
 
   let finalText = "";
   let image = null;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const res = await callGeminiChain(chain, apiKey, contents);
+    const res = await callGeminiChain(chain, apiKey, contents, systemNote);
     if (!res.ok) {
       console.error("LINE gemini fail round", round, "status", res.status, "err", JSON.stringify(res.data?.error || {}).slice(0, 500));
       return { text: "ขอโทษค่ะ ติดปัญหาเชื่อมต่อ AI ชั่วคราว ลองอีกครั้งนะคะ (" + (res.status || "err") + ")", baseUrl };
@@ -645,10 +650,10 @@ async function runAIDialog(env, services, userId, userText) {
   return { text: finalText, image, baseUrl };
 }
 
-async function callGeminiChain(chain, apiKey, contents) {
+async function callGeminiChain(chain, apiKey, contents, systemNote) {
   let last = null;
   for (const model of chain) {
-    const res = await callGemini(model, apiKey, contents);
+    const res = await callGemini(model, apiKey, contents, systemNote);
     if (res.ok) return res;
     last = res;
     if (res.status === 429) {
@@ -666,13 +671,13 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function callGemini(model, apiKey, contents) {
+async function callGemini(model, apiKey, contents, systemNote) {
   try {
     const r = await fetch(`${GEMINI_API}/${model}:generateContent?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: PERSONA }] },
+        systemInstruction: { parts: [{ text: PERSONA + (systemNote ? "\n\n" + systemNote : "") }] },
         contents,
         tools: [{ functionDeclarations: TOOL_DECLARATIONS }],
       }),
@@ -968,6 +973,21 @@ function bangkokNow() {
   if (hour === 24) hour = 0; // some locales format midnight as "24:00"
   const minutes = hour * 60 + parseInt(get("minute"), 10);
   return { date, minutes };
+}
+
+// Friendly "now" string in Thai + Buddhist year, e.g.
+// "วันอังคารที่ 18 สิงหาคม 2569 เวลา 10:19 (2026-08-18)". Injected into the
+// system prompt each request so the model never guesses a stale date/year.
+function bangkokNowText() {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("th-TH-u-ca-buddhist", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Bangkok",
+  }).format(now);
+  const iso = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Asia/Bangkok",
+  }).format(now);
+  return `${fmt} (วันที่แบบสากล ${iso})`;
 }
 
 // Cron-triggered reminder check. Reads the shared calendar, finds events for

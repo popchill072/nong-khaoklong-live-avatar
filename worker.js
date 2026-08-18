@@ -437,6 +437,10 @@ async function rememberCalendarUser(env, userId) {
    so call this whenever the user asks "today/what time/พรุ่งนี้/กี่โมง". */
 function handleNow() {
   const now = new Date();
+  // th-TH weekday already includes "วัน" ("วันอังคาร"); strip it for fields
+  // that re-add the prefix, so we never produce "วันวันอังคาร".
+  const weekdayLong = new Intl.DateTimeFormat("th-TH", { weekday: "long", timeZone: "Asia/Bangkok" }).format(now);
+  const weekday = weekdayLong.replace(/^วัน/, ""); // "อังคาร"
   const fmt = new Intl.DateTimeFormat("th-TH-u-ca-buddhist", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
     hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok",
@@ -445,13 +449,15 @@ function handleNow() {
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Bangkok",
   }).format(now).replace(",", "");
-  const weekday = new Intl.DateTimeFormat("th-TH", { weekday: "long", timeZone: "Asia/Bangkok" }).format(now);
+  const yearBE = Number(new Intl.DateTimeFormat("th-TH-u-ca-buddhist", { year: "numeric", timeZone: "Asia/Bangkok" }).format(now).replace(/[^\d]/g, ""));
   return json({
-    greeting: `วัน${weekday} ${fmt}`,
-    weekday,
-    dateThai: fmt,
+    greeting: fmt,
+    weekday, // "อังคาร"
+    weekdayThai: "วัน" + weekday, // "วันอังคาร"
+    dateThai: fmt, // "วันอังคารที่ 18 สิงหาคม 2569 เวลา 10:19"
+    date: iso.slice(0, 10), // "2026-08-18"
+    yearBE, // 2569 (Buddhist era — Thai calendar)
     iso,
-    weekdayThai: "วัน" + weekday,
     today: true,
   }, 200);
 }

@@ -1296,6 +1296,11 @@ async function toggleConnect(){
 }
 
 function setupSession(){
+  var nowText=(function(){
+    var f=new Intl.DateTimeFormat('th-TH-u-ca-buddhist',{weekday:'long',year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Bangkok'}).format(new Date());
+    var iso=new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit',timeZone:'Asia/Bangkok'}).format(new Date());
+    return f+' (วันที่แบบสากล '+iso+')';
+  })();
   sendWs({
     setup:{
       model:`models/${MODEL}`,
@@ -1303,7 +1308,8 @@ function setupSession(){
         responseModalities:["AUDIO"],
         speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:voiceId}}}
       },
-      systemInstruction:{parts:[{text:`คุณคือน้องข้าวกล้อง AI Assistant ผู้ช่วยส่วนตัวของเจ้าของ
+      systemInstruction:{parts:[{text:`วันนี้ที่กรุงเทพฯ คือ ${nowText} — ใช้ค่านี้เป็นหลักตลอดรอบนี้เมื่อตอบเรื่องวัน/เวลา/พรุ่งนี้/เมื่อวาน/ปี อย่าเดาจากความจำของเรา (ถ้าจำเป็นเรียก get_now ได้)
+คุณคือน้องข้าวกล้อง AI Assistant ผู้ช่วยส่วนตัวของเจ้าของ
 ภาพลักษณ์: นักเรียนหญิงไทยมัธยมปลาย อายุประมาณ 16-17 ปี น่ารัก สดใส อ่อนโยน อบอุ่น อารมณ์ดีแบบคนที่ฟังแล้วสบายใจ ไม่เสียงดังโวยวาย ไม่ยียวนเกินไป
 การพูด: ภาษาไทยวัยรุ่นธรรมชาติ เบา ๆ นุ่ม ๆ แต่แฝงความกระตือรือร้นและอารมณ์ดี ใช้คำเหมือนน้องสาวคุยกับพี่ ไม่อีโมเกิน ไม่เป็นทางการ ไม่เป็นหุ่นยนต์
 จังหวะ: พูดชัด นุ่มนวล ไพเราะ แต่มีชีวิตชีวา มีความรู้สึกอบอุ่นแทรกตามคำพูด
