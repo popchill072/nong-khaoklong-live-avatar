@@ -201,6 +201,18 @@ const TOOL_DECLARATIONS = [
       required: ["kind", "code"],
     },
   },
+  {
+    name: "report_issue",
+    description: "File a report/request to the admin on the user's behalf. Call when the user reports a problem, says the system is broken (ระบบพัง/ใช้งานไม่ได้/บอทไม่ตอบ), wants to contact/urgently reach the admin, or asks to send a message to the admin. Also call when they explicitly say แจ้งปัญหา/แจ้งเรื่อง/ติดต่อแอดมิน.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        text: { type: "STRING", description: "What the user wants the admin to know, concise Thai." },
+        urgent: { type: "BOOLEAN", description: "True if the user says it is urgent/ด่วน/เรื่องร้อน/เร่งด่วน." },
+      },
+      required: ["text"],
+    },
+  },
 ];
 
 // Verify the x-line-signature header of the raw webhook body.
@@ -275,8 +287,7 @@ async function handleLineEvent(ev, env, services) {
 
     await rememberLineUser(env, userId);
 
-    // Owner-only broadcast command: "ประกาศ: <ข้อความ>" (or "แจ้งข่าว: <ข้อความ>").
-    // Requires LINE_ADMIN_USER set to the owner's LINE userId.
+    // Owner-only commands: broadcast + view/reply to user reports.
     if (isOwner(env, userId)) {
       const m = text.match(/^(ประกาศ|แจ้งข่าว|announce)[:：]\s*(.+)$/i);
       if (m && m[2].trim()) {
@@ -287,6 +298,57 @@ async function handleLineEvent(ev, env, services) {
         await replyMessages(env, replyToken, [{ type: "text", text: msg.slice(0, 5000) }]);
         return;
       }
+      // Admin: view reports  -> "ดูเรื่องแจ้ง" / "reports"
+      const vr = text.match(/^(ดูเรื่องแจ้ง|ดูเรื่อง|reports?)[:：]?\s*(\d*)$/i);
+      if (vr) {
+        const limit = parseInt(vr[2] || "10", 10) || 10;
+        const out = await listReportsForAdmin(env, Math.min(limit, 50));
+        await replyMessages(env, replyToken, [{ type: "text", text: out.slice(0, 5000) }]);
+        return;
+      }
+      // Admin: reply to a ticket -> "ตอบ: R-xxx ข้อความ"
+      const rp = text.match(/^(ตอบ|reply)[:：]\s*([A-Za-z0-9-]+)\s+(.+)$/i);
+      if (rp) {
+        const msg = await adminReply(env, rp[2].toUpperCase(), rp[3]);
+        await replyMessages(env, replyToken, [{ type: "text", text: msg.slice(0, 5000) }]);
+        return;
+      }
+    }
+
+    // Report to admin (any user):
+    //   "แจ้งปัญหา: <ข้อความ>" -> submit immediately
+    //   "แจ้งปัญหา"           -> bot asks, next message becomes the report
+    const rpMatch = text.match(/^(แจ้งปัญหา|แจ้งเรื่อง|รายงานปัญหา|แจ้งขัดข้อง|ติดต่อแอดมิน|ติดต่อผู้ดูแล|แจ้งผู้ดูแล|ขอความช่วยเหลือ|แจ้งด่วน|report)[:：]?\s*(.*)$/i);
+    if (rpMatch) {
+      const content = (rpMatch[2] || "").trim();
+      if (content) {
+        const urgent = /ด่วน|ร้อน|เร่งด่วน|แย่มาก|ช่วยด่วน|สำคัญมาก|พัง/.test(text);
+        const out = await submitReport(env, userId, content, urgent);
+        await replyMessages(env, replyToken, [{ type: "text", text: out.slice(0, 5000), quickReply: quickReplyPayload() }]);
+        return;
+      }
+      // No content yet -> start the 2-step flow.
+      await env.MEMORY.put("report:pending:" + userId, "1", { expirationTtl: 30 * 60 }).catch(() => {});
+      await replyMessages(env, replyToken, [{
+        type: "text",
+        text: "รับทราบค่ะ 🤗 อยากแจ้งอะไรให้แอดมินทราบ พิมพ์รายละเอียดมาได้เลยค่ะ (พิมพ์ \"ยกเลิก\" ถ้าไม่ต้องการ)",
+        quickReply: quickReplyPayload(),
+      }]);
+      return;
+    }
+
+    // 2-step report: the previous "แจ้งปัญหา" asked for details; this message is it.
+    const pending = await env.MEMORY.get("report:pending:" + userId).catch(() => null);
+    if (pending) {
+      await env.MEMORY.delete("report:pending:" + userId).catch(() => {});
+      if (/^(ยกเลิก|ลืมไป|ไม่เอาแล้ว|ช่างเถอะ|ลืมแล้ว)$/.test(text)) {
+        await replyMessages(env, replyToken, [{ type: "text", text: "ไม่เป็นไรค่ะ ^^", quickReply: quickReplyPayload() }]);
+        return;
+      }
+      const urgent = /ด่วน|ร้อน|เร่งด่วน|แย่มาก|ช่วยด่วน|สำคัญมาก|พัง/.test(text);
+      const out = await submitReport(env, userId, text, urgent);
+      await replyMessages(env, replyToken, [{ type: "text", text: out.slice(0, 5000), quickReply: quickReplyPayload() }]);
+      return;
     }
 
     // Deterministic quick commands: reply straight from KV (no Gemini, no quota).
@@ -570,6 +632,107 @@ export async function broadcastAnnounce(env) {
       sent++;
     }
   }
+}
+
+/* --------------- User reports / contact admin ----------------------------- */
+
+const REPORT_SPAM_PER_HOUR = 3;
+const REPORT_URGENT = /ด่วน|ร้อน|เร่งด่วน|แย่มาก|ช่วยด่วน|สำคัญมาก|พัง/;
+
+function bangkokClock() {
+  const now = bangkokNow();
+  return `${String(Math.floor(now.minutes / 60)).padStart(2, "0")}:${String(now.minutes % 60).padStart(2, "0")}`;
+}
+
+// Store a user report, notify the admin (push) and return a confirmation text.
+// Dedupes abuse: max REPORT_SPAM_PER_HOUR reports per user (KV TTL window).
+export async function submitReport(env, userId, content, urgent) {
+  const text = String(content || "").trim();
+  if (!text) return "แจ้งเรื่องว่างเปล่านะคะ ลองพิมพ์รายละเอียดใหม่อีกทีค่ะ";
+  if (!userId || userId === "unknown") return "ขอโทษค่ะ ไม่สามารถระบุตัวตนผู้แจ้งได้ ลองใหม่นะคะ";
+
+  try {
+    // Spam limit: count in a 1-hour window.
+    const limitKey = "report:limit:" + userId;
+    const count = Number(await env.MEMORY.get(limitKey).catch(() => null)) || 0;
+    if (count >= REPORT_SPAM_PER_HOUR) {
+      return `ตอนนี้แจ้งเรื่องถึง ${REPORT_SPAM_PER_HOUR} ครั้ง/ชม. แล้วค่ะ ช่วยรออีกสักครู่หรือส่งข้อความคุยกับข้าวกล้องก่อนนะคะ 😊`;
+    }
+    await env.MEMORY.put(limitKey, String(count + 1), { expirationTtl: 3600 });
+
+    // Ticket id (sequential, short).
+    const seq = (Number(await env.MEMORY.get("report:seq").catch(() => null)) || 0) + 1;
+    await env.MEMORY.put("report:seq", String(seq));
+    const id = "R-" + String(seq).padStart(4, "0");
+
+    const ticket = { id, ts: `${bangkokNow().date} ${bangkokClock()}`, uid: userId, text, urgent: !!urgent };
+
+    // Per-user history (cap 50).
+    const userRaw = await env.MEMORY.get("reports:" + userId).catch(() => null);
+    const userList = userRaw ? JSON.parse(userRaw).filter(Boolean) : [];
+    userList.push(ticket);
+    await env.MEMORY.put("reports:" + userId, JSON.stringify(userList.slice(-50)));
+
+    // Global index for the admin (cap 200).
+    const allRaw = await env.MEMORY.get("reports:all").catch(() => null);
+    const allList = allRaw ? JSON.parse(allRaw).filter(Boolean) : [];
+    allList.push(ticket);
+    await env.MEMORY.put("reports:all", JSON.stringify(allList.slice(-200)));
+
+    // Notify admin via push (skip if LINE_ADMIN_USER not configured).
+    const admin = String(env.LINE_ADMIN_USER || "").trim();
+    if (admin && admin !== userId) {
+      const badge = urgent ? "🔴 [ด่วน]" : "📥";
+      await pushMessage(env, admin,
+        `${badge} แจ้งเรื่องใหม่ ${id} ${ticket.ts}\n${text.slice(0, 500)}\n\nดู: พิมพ์ "ดูเรื่องแจ้ง" / ตอบ: พิมพ์ "ตอบ: ${id} ข้อความ"`);
+    }
+
+    return urgent
+      ? `🚨 รับทราบเรื่องด่วนแล้วค่ะ (${id})\nส่งให้แอดมินทันทีแล้ว รอแอดมินติดต่อกลับนะคะ`
+      : `📥 รับทราบแล้วค่ะ (${id})\nส่งเรื่องให้แอดมินแล้ว แอดมินจะรีบจัดการให้ค่ะ`;
+  } catch (e) {
+    console.error("submitReport", e?.message || e);
+    return "ขอโทษค่ะ บันทึกเรื่องไม่สำเร็จ ลองใหม่อีกครั้งนะคะ";
+  }
+}
+
+// Admin: list the latest reports from the global index.
+export async function listReportsForAdmin(env, limit) {
+  const allRaw = await env.MEMORY.get("reports:all").catch(() => null);
+  const allList = allRaw ? JSON.parse(allRaw).filter(Boolean) : [];
+  if (!allList.length) return "ยังไม่มีเรื่องแจ้งเข้ามาค่ะ 📭";
+  const rows = allList.slice(-limit).reverse().map((r) =>
+    `${r.urgent ? "🔴" : "📥"} ${r.id} ${r.ts}${r.urgent ? " [ด่วน]" : ""}\n  ${String(r.text).slice(0, 120)}`
+  );
+  return `เรื่องแจ้งล่าสุด (${allList.length} รายการ):\n\n` + rows.join("\n") + "\n\nพิมพ์ \"ตอบ: <id> ข้อความ\" เพื่อตอบกลับผู้แจ้ง";
+}
+
+// Admin: push a reply back to the user who filed a given ticket.
+export async function adminReply(env, id, msg) {
+  const allRaw = await env.MEMORY.get("reports:all").catch(() => null);
+  const allList = allRaw ? JSON.parse(allRaw).filter(Boolean) : [];
+  const ticket = allList.find((r) => String(r.id).toUpperCase() === String(id).toUpperCase());
+  if (!ticket) return `ไม่เจอเรื่อง ${id} ในระบบค่ะ (ดูด้วย "ดูเรื่องแจ้ง")`;
+  const admin = String(env.LINE_ADMIN_USER || "").trim();
+  if (!admin) return "ยังไม่ได้ตั้ง LINE_ADMIN_USER ไว้ค่ะ";
+  const ok = await pushMessage(env, ticket.uid, `📨 แอดมินตอบกลับเรื่อง ${ticket.id}:\n${String(msg).slice(0, 500)}`);
+  return ok
+    ? `✅ ส่งคำตอบ ${ticket.id} กลับให้ผู้แจ้งแล้วค่ะ`
+    : "⚠️ ส่งคำตอบไม่สำเร็จ (push ผิดพลาด) — ดู log ได้เลยค่ะ";
+}
+
+// REST: GET /api/reports?limit=10 (admin only, guarded by LINE_ANNOUNCE_KEY).
+export async function handleReports(request, env) {
+  const json = (obj, status) => new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
+  if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
+  const expect = String(env.LINE_ANNOUNCE_KEY || "").trim();
+  const got = String(request.headers.get("x-announce-key") || "").trim();
+  if (!expect || got !== expect) return json({ error: "Invalid key" }, 401);
+  const url = new URL(request.url);
+  const limit = Math.min(parseInt(url.searchParams.get("limit") || "20", 10) || 20, 100);
+  const allRaw = await env.MEMORY.get("reports:all").catch(() => null);
+  const allList = allRaw ? JSON.parse(allRaw).filter(Boolean) : [];
+  return json({ count: allList.length, reports: allList.slice(-limit).reverse() }, 200);
 }
 
 /* ---------------- AI dialog (server-side, same personality + tools) ------- */
@@ -885,6 +1048,13 @@ async function runTool(name, args, env, services, baseUrl, userId) {
         const d = await r.json().catch(() => ({}));
         if (!d.ok) return { response: { error: d?.error || "invalid code", result: "รหัสยืนยันไม่ถูกต้องหรือหมดอายุ — เริ่มคำสั่งลบใหม่เพื่อขอรหัสใหม่" } };
         return { response: { ok: true, wiped: d.wiped, result: `ลบ ${d.wiped} ทั้งหมดเรียบร้อยแล้วค่ะ` } };
+      }
+      case "report_issue": {
+        const text = String(args.text || "").trim();
+        if (!text) return { response: { error: "missing text" } };
+        const urgent = !!args.urgent;
+        const out = await submitReport(env, userId, text, urgent);
+        return { response: { result: out } };
       }
       default:
         return { response: { error: "unknown tool: " + name } };

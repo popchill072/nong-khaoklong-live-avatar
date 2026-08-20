@@ -7,6 +7,7 @@ import {
   serveLineMedia,
   handleScheduled,
   handleAnnounce,
+  handleReports,
 } from "./line.js";
 
 // Handles to the original worker services. The LINE module calls these
@@ -100,6 +101,11 @@ export default {
     // POST /api/announce {text} + `x-announce-key` header (publish).
     if (url.pathname === "/api/announce") {
       return handleAnnounce(request, env);
+    }
+
+    // Admin: list user reports. GET /api/reports + `x-announce-key` header.
+    if (url.pathname === "/api/reports") {
+      return handleReports(request, env);
     }
 
     // LINE Official Account module (opt-in via env flags)
